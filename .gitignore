@@ -1,0 +1,34 @@
+# --- System & Environment ---
+__pycache__/
+*.pyc
+data/
+bin/
+*.o
+*.mod
+*.exe
+aermod_env/
+.vscode/
+
+# --- Secrets ---
+.cdsapirc
+config/secrets.yaml
+config.yaml
+
+# --- Data (Do NOT commit huge weather/model files) ---
+data/
+!data/.gitkeep
+
+# --- IDE Settings ---
+.vscode/
+.idea/
+
+# --- Logs ---
+*.log
+
+#----OS specifics----
+.DS_Store
+
+# --- Fortran Intermediate Files (in case they appear in root) ---
+*.o
+*.mod
+*.exe
