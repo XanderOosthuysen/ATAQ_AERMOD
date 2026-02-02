@@ -1,107 +1,134 @@
 import argparse
 import sys
+import subprocess
+from pathlib import Path
+
+# Import Modules
 from src.met_downloads import ERA5Downloader
 from src.met_processor import SurfaceProcessor, UpperAirProcessor
 from src.config_loader import load_config
 
-# Import Runners/Builders (Wrap in try/except to avoid crashes if files are missing during setup)
+# Import Helpers
 try:
+    from src.gui_helper import launch_gui
     from src.aermet_runner import AermetRunner
-    from src.aermod_builder import AermodBuilder
     from src.aermod_runner import AermodRunner
     from src.plotter import AermodPlotter
 except ImportError:
     pass
 
 def main():
-    parser = argparse.ArgumentParser(description="ATAQ AERMOD: ERA5 to AERMOD Pipeline")
+    parser = argparse.ArgumentParser(description="ATAQ AERMOD: Multi-Year Pipeline")
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to configuration file')
     
-    # All available actions
-    actions = [
-        'download',      # Phase 1: Fetch ERA5
-        'process',       # Phase 2: Convert to ONSITE/IGRA
-        'aermet',        # Phase 3: Run AERMET (Met Preprocessor)
-        'build_model',   # Phase 0: Compile AERMOD executable
-        'run_model',     # Phase 4: Run AERMOD (Dispersion)
-        'visualize'      # Phase 5: Plot Results
-    ]
+    actions = ['download', 'process', 'aermet', 'build_model', 'run_model', 'visualize']
+    # CHANGE 1: Set required=False so --gui can run alone
+    parser.add_argument('--action', choices=actions, required=False, help="Pipeline stage to execute")
     
-    parser.add_argument('--action', choices=actions, required=True, help="Pipeline stage to execute")
+    parser.add_argument('--overwrite', action='store_true', help='Force re-download/re-process of existing data')
+    parser.add_argument('--gui', action='store_true', help='Launch the Configuration GUI Helper')
+    
     args = parser.parse_args()
+
+    # CHANGE 2: GUI Logic comes FIRST
+    if args.gui:
+        print(">>> Launching GUI Helper...")
+        if 'launch_gui' in globals():
+            launch_gui()
+        else:
+            print("[ERROR] GUI module not found (src/gui_helper.py).")
+        return # Exit cleanly after GUI closes
+
+    # CHANGE 3: Enforce Action if NOT in GUI mode
+    if not args.action:
+        parser.error("the following arguments are required: --action (unless using --gui)")
+
+    # ---------------------------------------------------------
+    # REST OF THE PIPELINE (Only runs if Action is provided)
+    # ---------------------------------------------------------
 
     # 1. LOAD CONFIGURATION
     print(f"--- Loading Configuration: {args.config} ---")
     cfg = load_config(args.config)
     
-    # Extract variables for easier reading
-    year = cfg['project']['year']
+    # DETECT MULTI-YEAR
+    if 'years' in cfg['project']:
+        years = cfg['project']['years']
+    else:
+        years = [cfg['project']['year']]
+
     lat = cfg['location']['latitude']
     lon = cfg['location']['longitude']
     buffer = cfg['location'].get('area_buffer', 0.25)
 
     print(f"Project: {cfg['project']['name']}")
-    print(f"Site: {lat}, {lon} (Year: {year})")
+    print(f"Years to Process: {years}")
 
     # ==========================================
-    # PHASE 1: DOWNLOAD
+    # PHASE 0: BUILD MODEL (Run Once)
     # ==========================================
-    if args.action == 'download':
-        print(f"\n[PHASE 1] Downloading Data...")
-        downloader = ERA5Downloader()
-        downloader.download_surface(year, lat, lon, buffer)
-        downloader.download_upper_air(year, lat, lon, buffer)
-
-    # ==========================================
-    # PHASE 2: PROCESS
-    # ==========================================
-    elif args.action == 'process':
-        print(f"\n[PHASE 2] Processing Data...")
-        sfc_proc = SurfaceProcessor(cfg)
-        sfc_proc.process(year, lat, lon)
+    if args.action == 'build_model':
+        print(f"\n[PHASE 0] Building AERMOD System via setup_env.py...")
+        setup_script = Path("setup_env.py").resolve()
         
-        ua_proc = UpperAirProcessor(cfg)
-        ua_proc.process(year, lat, lon)
+        if not setup_script.exists():
+            print(f"[ERROR] Could not find {setup_script}")
+            return
+
+        try:
+            subprocess.run([sys.executable, str(setup_script)], check=True)
+            print("\n[SUCCESS] Build Complete. Binaries should be in /bin folder.")
+        except subprocess.CalledProcessError as e:
+            print(f"\n[ERROR] Build failed with exit code {e.returncode}")
+        
+        return 
 
     # ==========================================
-    # PHASE 3: AERMET
+    # LOOP THROUGH YEARS
     # ==========================================
-    elif args.action == 'aermet':
-        print(f"\n[PHASE 3] Running AERMET...")
-        if 'AermetRunner' not in globals():
-            from src.aermet_runner import AermetRunner
-        runner = AermetRunner(cfg)
-        runner.run()
+    for year in years:
+        print(f"\n>>> PROCESSING YEAR: {year} <<<")
+        
+        # Inject current year into config
+        cfg['project']['year'] = year
 
-    # ==========================================
-    # PHASE 0: BUILD MODEL
-    # ==========================================
-    elif args.action == 'build_model':
-        print(f"\n[PHASE 0] Building AERMOD System...")
-        if 'AermodBuilder' not in globals():
-            from src.aermod_builder import AermodBuilder
-        builder = AermodBuilder(cfg)
-        builder.build()
+        # PHASE 1: DOWNLOAD
+        if args.action == 'download':
+            print(f"[PHASE 1] Downloading {year}...")
+            st_name = cfg['project'].get('station_name', 'Station')
+            
+            downloader = ERA5Downloader(overwrite=args.overwrite)
+            downloader.download_surface(year, st_name, lat, lon, buffer)
+            downloader.download_upper_air(year, st_name, lat, lon, buffer)
 
-    # ==========================================
-    # PHASE 4: RUN AERMOD
-    # ==========================================
-    elif args.action == 'run_model':
-        print(f"\n[PHASE 4] Running AERMOD Model...")
-        if 'AermodRunner' not in globals():
-            from src.aermod_runner import AermodRunner
-        model_runner = AermodRunner(cfg)
-        model_runner.run()
+        # PHASE 2: PROCESS
+        elif args.action == 'process':
+            print(f"[PHASE 2] Processing {year}...")
+            sfc_proc = SurfaceProcessor(cfg)
+            sfc_proc.process(year, lat, lon)
+            ua_proc = UpperAirProcessor(cfg)
+            ua_proc.process(year, lat, lon)
 
-    # ==========================================
-    # PHASE 5: VISUALIZE
-    # ==========================================
-    elif args.action == 'visualize':
-        print(f"\n[PHASE 5] Visualization...")
-        if 'AermodPlotter' not in globals():
-            from src.plotter import AermodPlotter
-        plotter = AermodPlotter(cfg)
-        plotter.run()
+        # PHASE 3: AERMET
+        elif args.action == 'aermet':
+            print(f"[PHASE 3] Running AERMET for {year}...")
+            if 'AermetRunner' not in globals(): from src.aermet_runner import AermetRunner
+            runner = AermetRunner(cfg)
+            runner.run()
+
+        # PHASE 4: RUN AERMOD
+        elif args.action == 'run_model':
+            print(f"[PHASE 4] Running AERMOD for {year}...")
+            if 'AermodRunner' not in globals(): from src.aermod_runner import AermodRunner
+            model_runner = AermodRunner(cfg)
+            model_runner.run()
+
+        # PHASE 5: VISUALIZE
+        elif args.action == 'visualize':
+            print(f"[PHASE 5] Visualizing {year}...")
+            if 'AermodPlotter' not in globals(): from src.plotter import AermodPlotter
+            plotter = AermodPlotter(cfg)
+            plotter.run()
 
 if __name__ == "__main__":
     main()
