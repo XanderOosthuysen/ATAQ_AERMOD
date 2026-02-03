@@ -17,6 +17,12 @@ config.yaml
 # --- Data (Do NOT commit huge weather/model files) ---
 data/
 !data/.gitkeep
+data/met/raw/
+data/met/interim/
+data/met/processed/
+data/met/aermet_logs/
+data/model/
+data/model_output/
 
 # --- IDE Settings ---
 .vscode/
@@ -32,3 +38,6 @@ data/
 *.o
 *.mod
 *.exe
+
+# Secrets
+credentials.json
