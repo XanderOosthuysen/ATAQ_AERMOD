@@ -32,8 +32,11 @@ This can be set up by running the setup_env.py script.
 
 The script automatically downloads the source code for AERMET and AERMOD, and compiles it (Windows or Linux auto-detect).
 
-    python3 setup_env.py script
-    
+    python3 setup_env.py
+
+or 
+
+    python3 run_pipeline setup_aermod
 Alternativly:
 1. Create a folder named bin/ in the project root.
 2. Place your executables there:
@@ -60,6 +63,7 @@ All settings are managed in config.yaml.
 All actions are run through the run_pipeline.py script. 
 However there is a GUI that can assist to set up config.yaml and run the various options.
 To get Access to the GUI
+
     python3 run_pipeline.py -- guiequirements.txt
 
 Altenrative: use console and manually update config.yaml via Text editor.
@@ -85,7 +89,7 @@ Generates .SFC and .PFL files. Results are saved to data/met/processed.
 GUI or config.yaml AERMOD Params: Define your model parameters and Receptor Grid size.
 Inventory: Either use GUI or run the following: 
 
-    python3 run_pipeline.py --action build_inventory
+    python3 run_pipeline.py --action setup_inventory
 Define line, area and point sources in the respective CSV's. WKT is used for shape formatting. Use the provided templates.
 
 **Step 5: Run AERMOD**
