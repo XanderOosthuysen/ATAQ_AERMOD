@@ -1,0 +1,65 @@
+# ==========================================
+# ATAQ AERMOD - Project Configuration
+# ==========================================
+
+project:
+  name: "Johannesburg_Test"
+  years: [2020,2021,2022,2023,2024] # comma separated
+  station_name: "JHB_Braamfontein"
+  description: "Baseline air quality assessment"
+
+location:
+  # South is Negative, West is Negative
+  # Locationis where weather data is downloaded from.
+  latitude: -26.2041
+  longitude: 28.0473
+  elevation: 1600.0  # Meters above sea level)
+  # Buffer in degrees (0.25 deg is approx 25km)
+  area_buffer: 0.25
+  
+
+paths:
+  # Where to save data (relative to project root)
+  raw_dir: "./data/raw"
+  processed_dir: "./data/processed"
+  interim_dir: "data/interim"   # Add this
+  output_dir: "data/output"     # Add this
+  # Path to the AERMET executable
+  # On Linux, we compiled it to 'bin/aermet' (no extension)
+  aermet_exe: "./bin/aermet"
+  aermod_exe: "bin/aermod"
+
+aermet_params:
+  # Station IDs (arbitrary for onsite data, but required by AERMET)
+  surf_id: "99999"
+  ua_id: "99999"
+  
+  # Surface Characteristics (Seasonal/Sectoral)
+  # Defaulting to: Annual Average, Single Sector (0-360), Rural/Grassland
+  sectors:
+    - start: 0
+      end: 360
+      albedo: 0.18      # Generic Grassland
+      bowen: 1.0        # Generic Grassland (Moist)
+      roughness: 0.05   # Generic Grassland
+
+download:
+  # Timeouts or retries
+  request_timeout: 300
+
+processing:
+  # Options: "FSL" or "IGRA"
+  # IGRA is recommended for AERMET v21DRF and later.
+  # FSL currently not working
+  ua_format: "IGRA"
+
+aermod_params:
+  title: "Johannesburg_Simple_Point_Test"
+  pollutant: "SO2" # Just a label for now
+  averaging: ["1", "24", "PERIOD"] # 1-hr, 24-hr, and Annual averages
+  
+  # The Grid: Where we measure concentrations
+  receptor_grid:
+    type: "cartesian"
+    range_m: 2000     # 2km box around source
+    spacing_m: 100    # Receptor every 100m

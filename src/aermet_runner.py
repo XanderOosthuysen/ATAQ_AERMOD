@@ -1,5 +1,6 @@
-import subprocess
+import os
 import shutil
+import subprocess
 import pandas as pd
 from pathlib import Path
 
@@ -7,51 +8,59 @@ class AermetRunner:
     def __init__(self, config):
         self.cfg = config
         self.year = config['project']['year']
+        self.project_root = Path(__file__).parent.parent
         
-        # Resolve Paths from Config
-        self.proc_dir = Path(config['paths']['processed_dir']).resolve()
-        self.interim_dir = Path(config['paths']['interim_dir']).resolve()
-        self.output_dir = Path(config['paths']['output_dir']).resolve()
+        # Get Station Name
+        station = config['project'].get('station_name', 'Station')
         
-        # Create directories if they don't exist
-        for d in [self.proc_dir, self.interim_dir, self.output_dir]:
-            d.mkdir(parents=True, exist_ok=True)
-
-        # Use interim_dir as the 'sandbox' for the Fortran execution
-        self.run_dir = self.interim_dir
-        self.params = config['aermet_params']
+        # 1. INPUTS: data/met/interim/{station}
+        self.interim_dir = self.project_root / "data" / "met" / "interim" / station
+        
+        # 2. OUTPUTS: data/met/processed/{station}
+        self.proc_dir = self.project_root / "data" / "met" / "processed" / station
+        self.proc_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 3. LOGS/SANDBOX: data/met/aermet_logs/{station}/{year}
+        self.run_dir = self.project_root / "data" / "met" / "aermet_logs" / station / str(self.year)
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.params = config.get('aermet_params', {})
+        if 'surf_id' not in self.params: self.params['surf_id'] = '99999'
+        if 'ua_id' not in self.params: self.params['ua_id'] = '99999'
 
     def _prepare_onsite_data(self, csv_path):
-        print(f"    -> Formatting Onsite Data in interim...")
-        df = pd.read_csv(csv_path).fillna(-999)
+        print(f"    -> Formatting Onsite Data in logs folder...")
+        df = pd.read_csv(csv_path)
         out_name = f"onsite_{self.year}.dat"
         out_path = self.run_dir / out_name
         
         with open(out_path, 'w') as f:
             for _, row in df.iterrows():
-                # Format with extra spacing for Fortran safety
-                line = (f"{int(row['Year']):4d} {int(row['Month']):2d} {int(row['Day']):2d} {int(row['Hour']):2d} "
-                        f"{float(row['Temp_C']):6.1f} {float(row['DewPt_C']):6.1f} "
-                        f"{float(row['Press_mb']):7.1f} {float(row['Precip_mm']):6.2f} "
-                        f"{float(row['WindSpd_ms']):6.2f} {float(row['WindDir_deg']):6.1f} "
-                        f"{int(row['CloudCover']):2d}\n")
-                f.write(line)
+                try:
+                    line = (f"{int(row['Year']):4d} {int(row['Month']):2d} {int(row['Day']):2d} {int(row['Hour']):2d} "
+                            f"{float(row['Temp_C']):6.1f} {float(row['DewPt_C']):6.1f} "
+                            f"{float(row['Press_mb']):7.1f} {float(row['Precip_mm']):6.2f} "
+                            f"{float(row['WindSpd_ms']):6.2f} {float(row['WindDir_deg']):6.1f} "
+                            f"{int(row['CloudCover']):2d}\n")
+                    f.write(line)
+                except KeyError as e:
+                    print(f"[CRITICAL ERROR] CSV missing column: {e}")
+                    raise e
         return out_name
+
     def _write_input_file(self, ua_filename, onsite_filename):
-        print(f"    -> Creating AERMET.inp in interim...")
-        
-        # Format coordinates for AERMET
+        print(f"    -> Creating AERMET.inp...")
         lat = self.cfg['location']['latitude']
         lon = self.cfg['location']['longitude']
         lat_char = 'N' if lat >= 0 else 'S'
         lon_char = 'E' if lon >= 0 else 'W'
         lat_lon_str = f"{abs(lat):.3f}{lat_char} {abs(lon):.3f}{lon_char}"
+        elev = self.cfg['location'].get('elevation', 0)
         
-        elev = int(self.cfg['location'].get('elevation', 0))
         start_date = f"{self.year}/01/01"
         end_date = f"{self.year}/12/31"
         
-        # Final output names (AERMET will create these in the 'cwd', which is interim)
+        # Output filenames
         out_sfc = f"AM_{self.year}.SFC"
         out_pfl = f"AM_{self.year}.PFL"
         
@@ -74,8 +83,6 @@ class AermetRunner:
             f"   XDATES     {start_date} TO {end_date}",
             "   QAOUT      onsite_qa.out",
             "   THRESHOLD  0.5",
-            "",
-            # Ensure TSKC is included as the 11th column
             "   READ  1  OSYR OSMO OSDY OSHR TT01 DP01 PRES PRCP WS02 WD02 TSKC",
             "   FORMAT    1  FREE",
             "",
@@ -88,58 +95,81 @@ class AermetRunner:
             ""
         ]
 
-        # Add Surface Characteristics (SITE_CHAR)
-        for i, sector in enumerate(self.params['sectors']):
-            idx = int(i + 1)
-            inp_content.append(f"   FREQ_SECT   ANNUAL {idx}")
-            inp_content.append(f"   SECTOR      {idx} {int(sector['start'])} {int(sector['end'])}")
-            inp_content.append(f"   SITE_CHAR   1 {idx} {float(sector['albedo']):.2f} {float(sector['bowen']):.2f} {float(sector['roughness']):.2f}")
+        if 'sectors' in self.params:
+            for i, sector in enumerate(self.params['sectors']):
+                idx = int(i + 1)
+                inp_content.append(f"   FREQ_SECT   ANNUAL {idx}")
+                inp_content.append(f"   SECTOR      {idx} {int(sector['start'])} {int(sector['end'])}")
+                inp_content.append(f"   SITE_CHAR   1 {idx} {float(sector['albedo']):.2f} {float(sector['bowen']):.2f} {float(sector['roughness']):.2f}")
 
-        inp_path = self.run_dir / "aermet.inp"
-        with open(inp_path, "w") as f:
+        with open(self.run_dir / "aermet.inp", "w") as f:
             f.write("\n".join(inp_content))
-        
+            
         return "aermet.inp"
+
     def run(self):
-        print(f"\n[PHASE 3] Running AERMET for {self.year} (Standard Tree Mode)...")
+        print(f"\n[PHASE 3] Running AERMET for {self.year}...")
         
-        # 1. Stage Upper Air into Interim
-        src_ua = self.proc_dir / f"upper_air_{self.year}.igra"
+        # 1. Stage IGRA (Copy from Interim -> Logs/Sandbox)
+        src_ua = self.interim_dir / f"upper_air_{self.year}.igra"
         dst_ua = self.run_dir / "upper_air.igra"
+        
         if src_ua.exists():
             shutil.copy(src_ua, dst_ua)
+        else:
+            print(f"[ERROR] Missing Interim file: {src_ua}")
+            return
 
-        # 2. Stage Onsite into Interim
-        src_sfc_csv = self.proc_dir / f"surface_data_{self.year}.csv"
-        onsite_name = self._prepare_onsite_data(src_sfc_csv)
+        # 2. Stage Onsite (CSV -> Logs/Sandbox DAT)
+        src_sfc = self.interim_dir / f"surface_data_{self.year}.csv"
+        if not src_sfc.exists():
+            print(f"[ERROR] Missing Interim file: {src_sfc}")
+            return
+            
+        onsite_name = self._prepare_onsite_data(src_sfc)
 
-        # 3. Create Input File (Pointing to interim paths)
-        # Note: In the .inp, we keep paths relative to run_dir (interim)
+        # 3. Create INP
         inp_name = self._write_input_file("upper_air.igra", onsite_name)
         
-        exe_path = Path(self.cfg['paths']['aermet_exe']).resolve()
+        # 4. Find Binary
+        exe_path = self.project_root / "bin" / "aermet"
+        if os.name == 'nt': exe_path = exe_path.with_suffix('.exe')
         
+        if not exe_path.exists():
+            print(f"[ERROR] Binary not found: {exe_path}")
+            return
+
+        # 5. Execute
         try:
             print(f"    -> Executing AERMET in {self.run_dir.name}...")
             result = subprocess.run([str(exe_path), inp_name], 
                                     cwd=self.run_dir, 
                                     capture_output=True, text=True)
             
-            # 4. MOVE FINAL OUTPUTS TO PROCESSED/OUTPUT FOLDERS
-            # Move report and messages to data/output
-            for f in ['aermet.rpt', 'aermet.msg']:
-                if (self.run_dir / f).exists():
-                    shutil.move(self.run_dir / f, self.output_dir / f)
-
-            # Move .SFC and .PFL to data/processed
-            sfc_file = f"AM_{self.year}.SFC"
-            pfl_file = f"AM_{self.year}.PFL"
-            for f in [sfc_file, pfl_file]:
-                if (self.run_dir / f).exists():
-                    shutil.move(self.run_dir / f, self.proc_dir / f)
+            # 6. RESULT MANAGEMENT
+            out_sfc = f"AM_{self.year}.SFC"
+            out_pfl = f"AM_{self.year}.PFL"
             
-            print(f"    -> Success! Final inputs moved to: {self.proc_dir}")
-            print(f"    -> Reports moved to: {self.output_dir}")
+            if (self.run_dir / out_sfc).exists():
+                # A. Move Results to Processed
+                shutil.copy(self.run_dir / out_sfc, self.proc_dir / out_sfc)
+                shutil.copy(self.run_dir / out_pfl, self.proc_dir / out_pfl)
+                print(f"    -> Success! {out_sfc} & {out_pfl} saved to {self.proc_dir}")
+                
+                # B. CLEANUP
+                os.remove(self.run_dir / out_sfc)
+                os.remove(self.run_dir / out_pfl)
+                if (self.run_dir / "upper_air.igra").exists():
+                    os.remove(self.run_dir / "upper_air.igra")
+                if (self.run_dir / onsite_name).exists():
+                    os.remove(self.run_dir / onsite_name)
+                
+                print(f"    -> Cleaned up logs folder.")
+
+            else:
+                print("[ERROR] AERMET finished but no .SFC file created.")
+                print("Check 'aermet.rpt' in the logs folder.")
+                print("STDOUT Snippet:", result.stdout[:200])
 
         except Exception as e:
-            print(f"[ERROR] Execution failed: {e}")
+            print(f"[ERROR] Run failed: {e}")
