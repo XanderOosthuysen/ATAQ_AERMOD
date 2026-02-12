@@ -7,6 +7,7 @@ from pathlib import Path
 from src.config_loader import load_config
 from src.met_downloads import ERA5Downloader
 from src.met_processor import SurfaceProcessor, UpperAirProcessor
+from src.setup_inventory import setup_inventory
 
 # --- RUNNER IMPORTS (Standardized) ---
 # If these fail, we want the script to crash immediately so we know why.
@@ -28,7 +29,7 @@ def main():
     parser = argparse.ArgumentParser(description="ATAQ AERMOD: Multi-Year Pipeline")
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to configuration file')
     
-    actions = ['download', 'process', 'aermet', 'build_model', 'run_model', 'visualize']
+    actions = ['download', 'met_process', 'aermet', 'setup_aermod', 'run_model', 'visualize','setup_inventory']
     parser.add_argument('--action', choices=actions, required=False, help="Pipeline stage to execute")
     
     parser.add_argument('--overwrite', action='store_true', help='Force re-download/re-process of existing data')
@@ -68,29 +69,32 @@ def main():
     # ==========================================
     # PHASE 0: BUILD MODEL (Run Once)
     # ==========================================
-    if args.action == 'build_model':
+    if args.action == 'setup_aermod':
         print(f"\n[PHASE 0] Building AERMOD System via setup_env.py...")
         setup_script = Path("setup_env.py").resolve()
-        
         if not setup_script.exists():
             print(f"[ERROR] Could not find {setup_script}")
             return
-
         try:
             subprocess.run([sys.executable, str(setup_script)], check=True)
             print("\n[SUCCESS] Build Complete. Binaries should be in /bin folder.")
         except subprocess.CalledProcessError as e:
             print(f"\n[ERROR] Build failed with exit code {e.returncode}")
-        return 
-
+        return
+    
+	# ==========================================
+    # BUILD INVENTORIES (Run Once)
+    # =========================================
+    if args.action == 'setup_inventory':
+        print(f"\n Building Inventory Templates via setup_inventories.py...")
+        setup_inventory(cfg)
     # ==========================================
     # LOOP THROUGH YEARS
     # ==========================================
     for year in years:
-        print(f"\n>>> PROCESSING YEAR: {year} <<<")
         cfg['project']['year'] = year
 
-        # PHASE 1: DOWNLOAD
+        #   DOWNLOAD
         if args.action == 'download':
             print(f"[PHASE 1] Downloading {year}...")
             st_name = cfg['project'].get('station_name', 'Station')
@@ -98,15 +102,15 @@ def main():
             downloader.download_surface(year, st_name, lat, lon, buffer)
             downloader.download_upper_air(year, st_name, lat, lon, buffer)
 
-        # PHASE 2: PROCESS
-        elif args.action == 'process':
+        #  PROCESS
+        elif args.action == 'met_process':
             print(f"[PHASE 2] Processing {year}...")
             sfc_proc = SurfaceProcessor(cfg)
             sfc_proc.process(year, lat, lon)
             ua_proc = UpperAirProcessor(cfg)
             ua_proc.process(year, lat, lon)
 
-        # PHASE 3: AERMET
+        #  AERMET
         elif args.action == 'aermet':
             print(f"[PHASE 3] Running AERMET for {year}...")
             if 'AermetRunner' not in globals():
@@ -115,7 +119,7 @@ def main():
             runner = AermetRunner(cfg)
             runner.run()
 
-        # PHASE 4: RUN AERMOD
+        # RUN AERMOD
         elif args.action == 'run_model':
             print(f"[PHASE 4] Running AERMOD for {year}...")
             if 'AermodRunner' not in globals():
@@ -124,7 +128,7 @@ def main():
             model_runner = AermodRunner(cfg)
             model_runner.run()
 
-        # PHASE 5: VISUALIZE
+        # VISUALIZE
         elif args.action == 'visualize':
             print(f"[PHASE 5] Visualizing {year}...")
             if 'AermodPlotter' not in globals():

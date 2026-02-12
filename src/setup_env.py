@@ -98,7 +98,7 @@ def compile_linux(bin_dir, src_dir, exe_name):
         print(f"[ERROR] Linking failed: {e}")
         return False
 
-def main():
+def setup_aermod():
     base_dir = Path(__file__).parent.resolve()
     bin_dir = base_dir / "bin"
     bin_dir.mkdir(exist_ok=True)
