@@ -1,16 +1,20 @@
 # **ATAQ_AERMOD**
 
-Overview:
-This is an open-source project providing helper functions/interfaces to simplify the use of the USEPA's AERMOD.
-It is developed outside of the US, and therefor, alternatives sources of meteorological data is considered a priority. The end user is ultimatley responsible to ensure the validty of the data used.
+**Version:** v0.1.0-alpha
 
-## Features
-* **Automated Download:** Fetches surface and upper air data from ECMWF Climate Data Store (ERA5).
-* **Met Processing:** Converts raw NetCDF/GRIB data into AERMOD-ready `.SFC` and `.PFL` files.
-* **Multi-Year Support:** Loops through multiple years (e.g., 2020-2024) automatically.
-* **Robust Error Handling:** Auto-fixes "North Wind" vector issues and floating-point formatting.
-* **Project Isolation:** Keeps raw data, interim calculations, and final outputs in separate, organized folders.
-* **GIS Friendly** CSV are QGIS "friendly" for viewing or creating by using "WKT"-formatting.
+Overview:
+An open-source Python interface designed to simplify and automate the execution of the USEPA's AERMOD dispersion model. 
+
+Developed with a focus on usability outside of the US, this tool prioritizes alternative meteorological data sources (like ERA5), multi-year automation, and GIS integration.
+
+
+## ✨ Key Features
+* **Modern GUI Controller:** Manage projects, coordinates, and execution phases from a unified Tkinter interface.
+* **GIS-Ready Inventories (WKT):** Define complex Area, Line, and Point sources using standard Well-Known Text (WKT). Easily copy-paste geometries directly from QGIS or ArcGIS.
+* **Automated GeoTIFF Export:** AERMOD `.PLT` output files are automatically converted into georeferenced high-resolution `.tif` rasters for instant drag-and-drop visualization in your GIS software.
+* **Multi-Year Automation:** Loops through multiple years (e.g., 2020-2024) of meteorological data and modeling runs automatically.
+* **ERA5 Met Processing Pipeline:** Fetches and processes surface and upper-air data from the ECMWF Climate Data Store.
+* **Robust Error Handling:** Auto-fixes "North Wind" vector issues and strict Fortran formatting requirements.
 
 ---
 
@@ -18,32 +22,48 @@ It is developed outside of the US, and therefor, alternatives sources of meteoro
 ### 1. Python Environment
 Ensure you have Python 3.10+ installed.
 
-    # Create a virtual environment
+    # Create and activate a virtual environment
     python3 -m venv aermod_env
-    source aermod_env/bin/activate
+    source aermod_env/bin/activate  
+    # On Windows use:     aermod_env\Scripts\activate
     
     # Install dependencies
     pip install -r requirements.txt
+(Required packages include: pandas, numpy, pyproj, shapely, rasterio, matplotlib, scipy, pyyaml)
+
 
 ### 2. AERMOD Executables
-You must have the compiled Fortran binaries for AERMET and AERMOD.
-
-This can be set up by running the setup_env.py script. 
+You must have the compiled Fortran binaries for AERMET and AERMOD. **This is preferably set-up as per Section 4 using the GUI workflow** , or manually as below:
 
 The script automatically downloads the source code for AERMET and AERMOD, and compiles it (Windows or Linux auto-detect).
 
     python3 setup_env.py
-
-or 
-
-    python3 run_pipeline setup_aermod
+    
 Alternativly:
 1. Create a folder named bin/ in the project root.
 2. Place your executables there:
     - bin/aermet (or aermet.exe on Windows)
     - bin/aermod (or aermod.exe on Windows)
 
-### 3. CDS API Key (for Met Data)
+### 3. Launch the Controller
+The easiest way to use ATAQ AERMOD  and to set up the binaries is via the graphical interface. However all scripts and the run_pipeline function can be used as well.
+ 
+    python3 run_pipeline.py --gui
+
+### 4. Workflow
+1. Setup Env: Click the "Setup Env" button in the GUI to automatically download and compile the required AERMET and AERMOD Fortran binaries for your OS.
+
+2. Project Setup: Define your project name, years to run, and the precise Lat/Lon of your site.
+
+3. Meteorology: Choose between the automated ERA5 pipeline (requires CDS API keys) or provide your own .SFC and .PFL files.
+
+4. Inventory: Click "Init Templates" to generate your point_sources.csv, area_sources.csv, etc. Populate these using WKT geometries. (See the generated InventoryInstructions.txt for details).
+
+5. Run AERMOD: Execute the model. Final Plot files (.PLT) and georeferenced Rasters (.tif) will be exported to the data/model_output/{Project} folder.
+    
+
+
+### 5. CDS API Key (for Met Data)
 To download ERA5 data, you need an API key from the Copernicus Climate Data Store.
 
 Register at CDS: https://cds.climate.copernicus.eu/
@@ -55,63 +75,45 @@ Add your credentials:
     url: [https://cds.climate.copernicus.eu/api/v2]
     key: YOUR-UID:YOUR-API-KEY
 
-## HOW TO USE: 
+## MORE ON HOW TO USE: 
 
+All settings are managed in the project config.yaml. Named "PROJECT".yaml. 
 
-**Configuration**
-All settings are managed in config.yaml.
-All actions are run through the run_pipeline.py script. 
-However there is a GUI that can assist to set up config.yaml and run the various options.
-To get Access to the GUI
+All actions are run through the run_pipeline.py script or the GUI. 
 
-    python3 run_pipeline.py -- guiequirements.txt
+## 💻 Command-Line Interface (CLI) Reference
 
-Altenrative: use console and manually update config.yaml via Text editor.
+While the GUI is the recommended way to use ATAQ AERMOD, the pipeline can be fully automated or scripted via the command line using the `--action` argument.
 
+**Usage:** `python3 run_pipeline.py --action [ACTION_NAME] --config [CONFIG_FILE.yaml]`
 
-**Step 1: Download Meteorology**
-Downloads raw ERA5 data to data/met/raw/{StationName}.
+### Initialization & Setup
+* **`--gui`** Launches the graphical user interface. (Does not require an `--action` argument).
+* **`--action setup_aermod`**
+  Downloads the official EPA Fortran source code for AERMOD and AERMET and compiles the binaries for your specific operating system. (Only needs to be run once per machine).
+* **`--action setup_inventory`**
+  Generates the blank, WKT-ready CSV templates (`point_sources.csv`, `area_sources.csv`, `line_sources.csv`) and the `InventoryInstructions.txt` guide for the active project.
 
-    python3 run_pipeline.py --action download
-Alternative: User can supply pre-processed AERMET output files to use and skip this Step 1 and Step 2.
+### Meteorological Pipeline (ERA5)
+* **`--action download`**
+  Connects to the ECMWF Climate Data Store (CDS) to download raw ERA5 surface and upper-air NetCDF/GRIB files for the coordinates and years specified in your config.
+* **`--action met_process`**
+  Extracts and converts the raw ERA5 data into the intermediate formats required by AERMET (e.g., extracting specific wind vectors, cloud cover, and formatting upper-air soundings).
+* **`--action aermet`**
+  Executes the AERMET meteorological pre-processor to generate the final `.SFC` (Surface) and `.PFL` (Profile) files required by AERMOD.
 
-**Step 2: Process Meteorology**
-Converts raw data to AERMET-ready CSVs and IGRA files in data/met/interim.
-
-
-    python3 run_pipeline.py --action process
-**Step 3: Run AERMET**
-Generates .SFC and .PFL files. Results are saved to data/met/processed.
-
-
-    python3 run_pipeline.py --action aermet
-**Step 4: Configure AERMOD**
-GUI or config.yaml AERMOD Params: Define your model parameters and Receptor Grid size.
-Inventory: Either use GUI or run the following: 
-
-    python3 run_pipeline.py --action setup_inventory
-Define line, area and point sources in the respective CSV's. WKT is used for shape formatting. Use the provided templates.
-
-**Step 5: Run AERMOD**
-Executes the dispersion model.
-
-Inputs: Reads met data from data/met/processed.
-
-Sandbox: Runs inside data/model/run/{Project}/{Year} to prevent file conflicts. Automatically cleans up the sandbox-post succesful excecution.
-Outputs: Final Plot files (.PLT) and Logs (.out) are moved to data/model_output/{Project}.
-
-    python3 run_pipeline.py --action aermod
-    (Optional) Run All Steps
-    Bash
-    python3 run_pipeline.py --action all
-
+### Dispersion Modeling & Post-Processing
+* **`--action run_model`**
+  Executes the AERMOD dispersion model. It parses your WKT inventory, dynamically generates the `aermod.inp` file for each active pollutant, runs the model in an isolated sandbox, and automatically exports GeoTIFFs (`.tif`) of the resulting `.PLT` files.
+* **`--action visualize`**
+  Generates a quick 2D Matplotlib contour plot (`.png`) of a specific `.PLT` file for rapid quality assurance without needing to open GIS software.
 
 ## Directory structure ##
 ```text
 ATAQ_AERMOD
  ┣ 📂 bin                 # Executables (aermet, aermod)
  ┣ 📂 src                 # Source code (processors, runners)
- ┣ 📜 config.yaml         # Main configuration
+ ┣ 📂 project_configs     # Saved YAML configuration files per project
  ┣ 📜 run_pipeline.py     # Entry point
  ┗ 📂 data                # Data storage (Ignored by Git)
     ┣ 📂 met
@@ -119,6 +121,6 @@ ATAQ_AERMOD
     ┃  ┣ 📂 interim       # Intermediate CSV/IGRA files
     ┃  ┣ 📂 processed     # Final .SFC and .PFL files
     ┃  ┗ 📂 aermet_logs   # Debug logs from AERMET
-    ┣ 📂 inventory        # Source inventories
-    ┣ 📂 model            # AERMOD Sandbox
-    ┗ 📂 model_output     # Final .PLT and .OUT files
+    ┣ 📂 inventory        # Source inventories (CSVs with WKT inputs)
+    ┣ 📂 model            # AERMOD Sandbox for active runs (and troubleshooting)
+    ┗ 📂 model_output     # Final .PLT  .OUT files and .tif GeoTIFFs
