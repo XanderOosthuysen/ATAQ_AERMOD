@@ -4,6 +4,7 @@ import os
 import math
 from pathlib import Path
 from src.inventory_manager import InventoryManager
+from src.geotiff_exporter import GeotiffExporter
 
 class AermodRunner:
     def __init__(self, config):
@@ -17,7 +18,6 @@ class AermodRunner:
         self.output_dir = self.project_root / "data" / "model_output" / self.project_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Sandbox: data/model/run/{Project}/{Year}
         self.run_dir = self.project_root / "data" / "model" / "run" / self.project_name / str(self.year)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         
@@ -25,12 +25,12 @@ class AermodRunner:
         self.params = config['aermod_params']
 
     def _generate_receptors(self):
-        """Generates the GRIDCART block using strict float formatting."""
         print("    -> Generating Receptor Grid...")
         grid = self.params.get('receptor_grid', {'range_m': 5000, 'spacing_m': 500})
         rng = float(grid.get('range_m', 5000))
         spc = float(grid.get('spacing_m', 500))
         num_pts = int((rng * 2) / spc) + 1
+        
         start_val = f"-{rng:.1f}"
         delta = f"{spc:.1f}"
         
@@ -38,22 +38,15 @@ class AermodRunner:
             "RE STARTING",
             "   ELEVUNIT METERS",
             "   GRIDCART NET1 STA",
-            f"   XYINC    {start_val} {num_pts} {delta} {start_val} {num_pts} {delta}",
-            "   END",
+            f"   GRIDCART NET1 XYINC {start_val} {num_pts} {delta} {start_val} {num_pts} {delta}",
+            "   GRIDCART NET1 END",
             "RE FINISHED"
         ]
 
     def _write_input_file(self, pollutant, avg_times):
-        """
-        Generates AERMOD.INP specific to the current pollutant loop.
-        avg_times: list of strings e.g. ['1', '24', 'ANNUAL']
-        """
         print(f"    -> Generating AERMOD.INP for {pollutant}...")
         
-        # 1. CONTROL PATHWAY
-        # Format AVERTIME: "AVERTIME 1 24 ANNUAL"
         avg_str = " ".join(avg_times)
-        
         co_block = [
             "CO STARTING",
             f"   TITLEONE  {self.project_name} - {self.year} - {pollutant}",
@@ -65,23 +58,11 @@ class AermodRunner:
             "CO FINISHED"
         ]
 
-        # 2. SOURCE PATHWAY
         inv_man = InventoryManager(self.cfg)
-        so_block = inv_man.generate_all_sources()
-        if len(so_block) <= 3:
-            # Fallback dummy
-            so_block = [
-                "SO STARTING",
-                "   LOCATION STACK1 POINT 0.0 0.0 0.0",
-                "   SRCPARAM STACK1 1.0 10.0 300.0 10.0 1.0",
-                "   SRCGROUP ALL",
-                "SO FINISHED"
-            ]
+        so_block = inv_man.generate_all_sources(pollutant)
 
-        # 3. RECEPTOR PATHWAY
         re_block = self._generate_receptors()
 
-        # 4. METEOROLOGY PATHWAY
         sfc_file = f"AM_{self.year}.SFC"
         pfl_file = f"AM_{self.year}.PFL"
         prof_elev = float(self.cfg['location'].get('elevation', 0.0))
@@ -97,26 +78,17 @@ class AermodRunner:
             "ME FINISHED"
         ]
 
-        # 5. OUTPUT PATHWAY
-        # Dynamic Plot Files based on Avg Times
         ou_block = ["OU STARTING", "   RECTABLE ALLAVE FIRST-SECOND"]
-        
         for avg in avg_times:
-            # Clean filename suffix
             suffix = "ANN" if avg == "ANNUAL" else f"{int(avg):02d}H"
-            
-            # Use 'PERIOD' keyword if ANNUAL, else the number
             aer_key = "ANNUAL" if avg == "ANNUAL" else avg
-            
-            # Format: {Project}_{Year}_{Pollutant}_{Suffix}.PLT
             fname = f"{self.project_name}_{self.year}_{pollutant}_{suffix}.PLT"
             ou_block.append(f"   PLOTFILE {aer_key} ALL 1ST {fname}")
-
         ou_block.append("OU FINISHED")
         
         full_inp = "\n".join(co_block + [""] + so_block + [""] + re_block + [""] + me_block + [""] + ou_block)
-        
         inp_path = self.run_dir / "aermod.inp"
+        
         with open(inp_path, "w") as f:
             f.write(full_inp)
         
@@ -125,7 +97,6 @@ class AermodRunner:
     def run(self):
         print(f"\n[PHASE 4] Running AERMOD Model for {self.year}...")
         
-        # 0. Check & Stage Met Data
         src_sfc = self.met_dir / f"AM_{self.year}.SFC"
         src_pfl = self.met_dir / f"AM_{self.year}.PFL"
         if not src_sfc.exists() or not src_pfl.exists():
@@ -139,7 +110,6 @@ class AermodRunner:
              print(f"[ERROR] AERMOD Executable not found at {self.exe_path}")
              return
 
-        # 1. LOOP THROUGH POLLUTANTS
         pollutants_config = self.params.get('pollutants', {})
         active_pollutants = [p for p, data in pollutants_config.items() if data.get('enabled', False)]
         
@@ -148,16 +118,17 @@ class AermodRunner:
             active_pollutants = ['SO2']
             pollutants_config = {'SO2': {'avg_times': ['1', '24']}}
 
+        # Initialize Exporter for automatic GeoTIFF generation
+        tif_exporter = GeotiffExporter(self.cfg)
+
         for pol in active_pollutants:
             print(f"\n   >>> MODELING POLLUTANT: {pol} <<<")
             settings = pollutants_config.get(pol, {'avg_times': ['1', '24']})
             avg_times = settings.get('avg_times', ['1', '24'])
 
-            # 2. Write INP for this pollutant
             inp_name = self._write_input_file(pol, avg_times)
 
             try:
-                # 3. Execute
                 print(f"    -> Executing AERMOD in sandbox...")
                 log_name = f"aermod_{pol}.log"
                 with open(self.run_dir / log_name, "w") as log_file:
@@ -166,25 +137,29 @@ class AermodRunner:
                                    stdout=log_file,
                                    stderr=subprocess.STDOUT)
                 
-                # 4. Handle Outputs
                 out_file = self.run_dir / "aermod.out"
                 if out_file.exists():
-                    # Move Main Output
                     final_out = self.output_dir / f"AERMOD_{self.year}_{pol}.out"
                     shutil.move(out_file, final_out)
                     print(f"    -> Output saved: {final_out.name}")
 
-                    # Move PLT files
                     count = 0
                     for plt in self.run_dir.glob("*.PLT"):
-                        # Destination is already named correctly in INP generation
                         dest = self.output_dir / plt.name
                         if dest.exists(): os.remove(dest)
                         shutil.move(plt, dest)
                         count += 1
+                        
+                        # --- NEW: AUTO-EXPORT TO TIF ---
+                        print(f"    -> Rendering GeoTIFF...")
+                        success, msg = tif_exporter.export(dest)
+                        if success:
+                            print(f"       + {msg}")
+                        else:
+                            print(f"       - {msg}")
                     
                     if count > 0:
-                        print(f"    -> Success! {count} Plot files moved.")
+                        print(f"    -> Success! {count} Plot files moved & rasterized.")
                     else:
                         print("[WARNING] No .PLT files found.")
                 else:

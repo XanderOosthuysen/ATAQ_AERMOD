@@ -270,12 +270,10 @@ class GUIHelper:
     # --- WIDGET CREATION ---
     def create_widgets(self):
         # 1. Main Content Area (Top 2/3) - Using PanedWindow
-        # PanedWindow does NOT support weight in add()
         main_pane = tk.PanedWindow(self.root, orient=tk.VERTICAL)
         main_pane.pack(fill='both', expand=True)
 
         top_frame = ttk.Frame(main_pane)
-        # Use stretch='always' so it resizes. 
         main_pane.add(top_frame, stretch="always")
 
         # --- Header ---
@@ -299,6 +297,9 @@ class GUIHelper:
         
         self.tab_pol = ttk.Frame(self.notebook); self.notebook.add(self.tab_pol, text='4. Pollutants')
         self.create_analysis_tab(self.tab_pol)
+
+        self.tab_post = ttk.Frame(self.notebook); self.notebook.add(self.tab_post, text='5. Post-Processing')
+        self.create_post_processing_tab(self.tab_post)
         
         # --- Action Buttons ---
         btn_frame = ttk.Frame(top_frame, padding=10)
@@ -306,12 +307,15 @@ class GUIHelper:
         
         self.btn_setup = ttk.Button(btn_frame, text="🛠️ Setup Env", command=self.confirm_and_setup)
         self.btn_setup.pack(side='left', padx=5)
+        ToolTip(self.btn_setup, "Downloads and compiles AERMOD & AERMET binaries.\nOnly needs to be run once per system.")
         
         self.btn_aermod = ttk.Button(btn_frame, text="🏭 Run AERMOD Model", command=self.run_aermod_model)
         self.btn_aermod.pack(side='left', padx=20)
+        ToolTip(self.btn_aermod, "Executes the AERMOD dispersion model using the configured inputs.")
         
         self.btn_save = ttk.Button(btn_frame, text="💾 Save Config", command=self.save_config)
         self.btn_save.pack(side='right', padx=5)
+        ToolTip(self.btn_save, "Saves current UI parameters to the active configuration file.")
 
         # 2. Console Area (Bottom 1/3)
         bottom_frame = ttk.Frame(main_pane)
@@ -323,11 +327,11 @@ class GUIHelper:
         self.console.pack(fill='both', expand=True, padx=5, pady=5)
 
         # Force initial Sash position to 2/3 down (approx 600px)
-        self.root.update_idletasks() # Ensure widget is drawn first
+        self.root.update_idletasks()
         try:
             main_pane.sash_place(0, 0, 600)
         except:
-            pass # Fails if window not ready, minor issue
+            pass 
 
         # Populate UI
         self.refresh_ui_from_config()
@@ -341,35 +345,72 @@ class GUIHelper:
     def run_aermet(self): self.run_pipeline_action("aermet", on_complete=lambda s: setattr(self, 'aermet_completed', s))
     def run_aermod_model(self): self.run_pipeline_action("run_model")
 
+    def run_simple_plot(self):
+        plt_path = self.vars.get('plt_file_path').get()
+        if not plt_path or not Path(plt_path).exists():
+            messagebox.showwarning("Missing File", "Please select a valid .PLT file first.")
+            return
+        
+        self.log(f"\n--- STARTING ACTION: PLOT ---")
+        self.log(f"Plotting {Path(plt_path).name}...")
+        
+        try:
+            from src.plotter import AermodPlotter
+            plotter = AermodPlotter(self.config)
+            
+            # Using main thread for Matplotlib to avoid crashing UI
+            success, msg = plotter.plot_file(plt_path)
+            
+            if success:
+                self.log(f"[SUCCESS] {msg}")
+            else:
+                self.log(f"[ERROR] {msg}")
+                messagebox.showerror("Plot Error", msg)
+                
+        except ImportError as e:
+            err = "Missing required libraries. Run: pip install matplotlib scipy numpy pandas"
+            self.log(f"[ERROR] {err}")
+            messagebox.showerror("Dependency Error", err)
+        except Exception as e:
+            self.log(f"[ERROR] Plotting failed: {e}")
+            messagebox.showerror("Error", str(e))
+        finally:
+            self.log(f"--- FINISHED ACTION: PLOT ---\n")
+
+
+    def open_instructions(self):
+        """Creates the instruction file if missing, then opens it."""
+        instructions_path = self.project_root / "InventoryInstructions.txt"
+        if not instructions_path.exists():
+            content = """================================================\nATAQ AERMOD - EMISSIONS INVENTORY INSTRUCTIONS\n================================================\n\nGENERAL RULES:\n- source_id: Unique name for the source (No spaces, use underscores e.g., STACK_01).\n- WKT (Well-Known Text): Defines the geometry in WGS84 (Longitude Latitude). \n  You can copy-paste WKT directly from QGIS or other GIS software.\n- Pollutants (SO2, NO2, etc.): Leave as 0.0 if the source does not emit that pollutant.\n\n--- 1. POINT SOURCES (point_sources.csv) ---\nWKT Format     : POINT (Lon Lat)\nelevation      : Base elevation above sea level (meters)\nstack_height   : Release height above ground (meters)\nstack_temp_k   : Exhaust gas temperature (Kelvin)  [Celsius + 273.15]\nstack_velocity : Exhaust gas exit velocity (m/s)\nstack_diameter : Inner diameter of the stack (meters)\nPollutants     : Emission rate in grams per second (g/s)\n\n--- 2. AREA SOURCES (area_sources.csv) ---\nWKT Format     : POLYGON ((Lon Lat, Lon Lat, ...))\nelevation      : Base elevation above sea level (meters)\nrelease_height : Release height above ground (meters)\nszinit         : Initial vertical dispersion (meters). Usually 0.0 or release_height / 4.3.\nPollutants     : Emission rate in grams per second per square meter (g/s/m^2)\n\n--- 3. LINE SOURCES (line_sources.csv) ---\nWKT Format     : LINESTRING (Lon Lat, Lon Lat, ...)\nelevation      : Base elevation above sea level (meters)\nrelease_height : Release height above ground (meters)\nwidth_m        : Width of the road/line (meters)\nszinit         : Initial vertical dispersion (meters). Usually 0.0.\nPollutants     : Emission rate in grams per second per square meter (g/s/m^2)\n"""
+            with open(instructions_path, 'w') as f:
+                f.write(content)
+        self.open_path(instructions_path)
+
     # --- State Management (LOCKING LOGIC) ---
     def toggle_met_source(self):
         self.update_button_states()
 
     def update_button_states(self):
-        """Handles locking buttons during runs AND toggling based on config"""
-        
         # If running, DISABLE ALL ACTION BUTTONS
         if self.is_running:
             state = 'disabled'
-            # Disable main buttons
             if hasattr(self, 'btn_setup'): self.btn_setup.config(state=state)
             if hasattr(self, 'btn_aermod'): self.btn_aermod.config(state=state)
             if hasattr(self, 'btn_save'): self.btn_save.config(state=state)
-            
-            # Disable Tab 2 buttons
             if hasattr(self, 'btn_dl'): self.btn_dl.config(state=state)
             if hasattr(self, 'btn_proc'): self.btn_proc.config(state=state)
             if hasattr(self, 'btn_aermet'): self.btn_aermet.config(state=state)
-            
-            # Disable Tab 3 buttons
             if hasattr(self, 'btn_init_inv'): self.btn_init_inv.config(state=state)
             return
 
         # --- If NOT running, apply normal logic ---
-        # Re-enable Setup/Save
         if hasattr(self, 'btn_setup'): self.btn_setup.config(state='normal')
         if hasattr(self, 'btn_save'): self.btn_save.config(state='normal')
         if hasattr(self, 'btn_init_inv'): self.btn_init_inv.config(state='normal')
+        
+        # AERMOD is now always available when not running
+        if hasattr(self, 'btn_aermod'): self.btn_aermod.config(state='normal')
 
         try:
             mode = self.vars['data_source'].get()
@@ -378,13 +419,6 @@ class GUIHelper:
             if hasattr(self, 'btn_dl'): self.btn_dl.config(state=era_state)
             if hasattr(self, 'btn_proc'): self.btn_proc.config(state=era_state)
             if hasattr(self, 'btn_aermet'): self.btn_aermet.config(state=era_state)
-            
-            # AERMOD Button
-            mod_state = 'disabled'
-            if mode == 'USER': mod_state = 'normal'
-            elif mode == 'ERA5' and self.aermet_completed: mod_state = 'normal'
-            
-            if hasattr(self, 'btn_aermod'): self.btn_aermod.config(state=mod_state)
             
             # Toggle User Met Inputs
             u_state = 'normal' if mode == 'USER' else 'disabled'
@@ -415,6 +449,24 @@ class GUIHelper:
             win.destroy()
         ttk.Button(win, text="Save", command=save).pack(pady=15)
 
+    def browse_plt_file(self):
+        """Dedicated file browser for PLT files, defaulting to the model_output directory"""
+        proj_name = self.config.get('project', {}).get('name', 'MyProject')
+        
+        # Try to open directly in the project's specific output folder
+        init_dir = self.project_root / "data" / "model_output" / proj_name
+        if not init_dir.exists():
+            init_dir = self.project_root / "data" / "model_output"
+        if not init_dir.exists():
+            init_dir = self.project_root
+
+        f = filedialog.askopenfilename(
+            initialdir=init_dir,
+            title="Select AERMOD Plot File (.PLT)",
+            filetypes=[("AERMOD Plot Files", "*.PLT"), ("All Files", "*.*")]
+        )
+        if f: self.vars['plt_file_path'].set(f)
+
     # --- TABS ---
     def create_project_tab(self, parent):
         f = ttk.LabelFrame(parent, text="Project", padding=10)
@@ -424,8 +476,13 @@ class GUIHelper:
         
         f = ttk.LabelFrame(parent, text="Location", padding=10)
         f.pack(fill='x', pady=5, padx=10)
-        self.add_entry(f, "Lat:", "lat", self.config['location'].get('latitude', 0.0))
-        self.add_entry(f, "Lon:", "lon", self.config['location'].get('longitude', 0.0))
+        
+        lat_entry = self.add_entry(f, "Lat:", "lat", self.config['location'].get('latitude', 0.0))
+        ToolTip(lat_entry, "Format: Decimal Degrees (e.g. -26.204)\nCRS: WGS84 (EPSG:4326)\nNegative for Southern Hemisphere")
+        
+        lon_entry = self.add_entry(f, "Lon:", "lon", self.config['location'].get('longitude', 0.0))
+        ToolTip(lon_entry, "Format: Decimal Degrees (e.g. 28.047)\nCRS: WGS84 (EPSG:4326)")
+        
         self.add_entry(f, "Elev:", "elev", self.config['location'].get('elevation', 0.0))
         
         f = ttk.LabelFrame(parent, text="Paths", padding=10)
@@ -440,21 +497,30 @@ class GUIHelper:
         f.pack(fill='both', expand=True, padx=10, pady=10)
         self.vars['data_source'] = tk.StringVar(value=self.config['project'].get('data_source', 'ERA5'))
         
-        ttk.Radiobutton(f, text="ERA5 Pipeline", variable=self.vars['data_source'], value="ERA5", command=self.toggle_met_source).pack(anchor='w', padx=10)
+        rb1 = ttk.Radiobutton(f, text="ERA5 Pipeline", variable=self.vars['data_source'], value="ERA5", command=self.toggle_met_source)
+        rb1.pack(anchor='w', padx=10)
+        ToolTip(rb1, "Requires Copernicus CDS API credentials. Automates data download and surface/upper-air processing.")
         
-        # ERA5 Buttons
         b_frame = ttk.Frame(f)
         b_frame.pack(fill='x', padx=30, pady=5)
         self.btn_dl = ttk.Button(b_frame, text="1. Download", command=self.run_download)
         self.btn_dl.pack(side='left', padx=2)
+        ToolTip(self.btn_dl, "Downloads ERA5 surface and upper-air data for the selected location and years.")
+        
         self.btn_proc = ttk.Button(b_frame, text="2. Process", command=self.run_met_process)
         self.btn_proc.pack(side='left', padx=2)
+        ToolTip(self.btn_proc, "Processes raw ERA5 GRIB/NetCDF files into intermediate formats suitable for AERMET.")
+        
         self.btn_aermet = ttk.Button(b_frame, text="3. Run AERMET", command=self.run_aermet)
         self.btn_aermet.pack(side='left', padx=2)
+        ToolTip(self.btn_aermet, "Executes AERMET to generate the final .SFC and .PFL files required by AERMOD.")
         
         ttk.Separator(f).pack(fill='x', pady=10)
         
-        ttk.Radiobutton(f, text="User Files", variable=self.vars['data_source'], value="USER", command=self.toggle_met_source).pack(anchor='w', padx=10)
+        rb2 = ttk.Radiobutton(f, text="User Files", variable=self.vars['data_source'], value="USER", command=self.toggle_met_source)
+        rb2.pack(anchor='w', padx=10)
+        ToolTip(rb2, "Bypass the ERA5 pipeline. Manually provide pre-processed .SFC and .PFL files.")
+        
         self.frm_user_met = ttk.Frame(f)
         self.frm_user_met.pack(fill='x', padx=30, pady=5)
         self.add_file_picker(self.frm_user_met, "SFC File:", 'sfc_path', self.config['project'].get('user_sfc', ''), "SFC")
@@ -462,12 +528,18 @@ class GUIHelper:
 
     def create_inventory_tab(self, parent):
         h = ttk.Frame(parent); h.pack(fill='x', padx=10, pady=10)
-        self.btn_init_inv = ttk.Button(h, text="Init Templates", command=self.run_setup_inventory)
-        self.btn_init_inv.pack(side='left')
         
+        self.btn_init_inv = ttk.Button(h, text="Init Templates", command=self.run_setup_inventory)
+        self.btn_init_inv.pack(side='left', padx=(0, 5))
+        ToolTip(self.btn_init_inv, "Creates blank CSV templates (point, area, line) for your project if they do not exist.")
+        
+        btn_help = ttk.Button(h, text="📖 Instructions", command=self.open_instructions)
+        btn_help.pack(side='left')
+        ToolTip(btn_help, "Opens the global guide on required formats and emission units.")
+
         pname = self.config['project'].get('name', 'MyProject')
         def_path = self.data_dir / "inventory" / pname
-        ttk.Button(h, text="Open Folder", command=lambda: self.open_path(def_path)).pack(side='right')
+        ttk.Button(h, text="📂 Open Folder", command=lambda: self.open_path(def_path)).pack(side='right')
         
         f = ttk.LabelFrame(parent, text="Files", padding=10)
         f.pack(fill='both', padx=10)
@@ -490,17 +562,76 @@ class GUIHelper:
             if chk: self.pollutant_configs[pol] = saved[pol].get('avg_times', ['1', '24'])
             else: self.pollutant_configs[pol] = ['1', '24']
             
-            ttk.Button(pf, text="⚙️", width=3, command=lambda p=pol: self.open_pollutant_settings(p)).pack(side='left', padx=(0,5))
+            btn = ttk.Button(pf, text="⚙️", width=3, command=lambda p=pol: self.open_pollutant_settings(p))
+            btn.pack(side='left', padx=(0,5))
+            ToolTip(btn, f"Configure specific averaging times (e.g. 1-Hour, 24-Hour, Annual) for {pol}.")
+            
             ttk.Checkbutton(pf, text=pol, variable=self.pollutant_vars[pol]).pack(side='left')
             c+=1
             if c>1: c=0; r+=1
+
+    def run_export_tif(self):
+        """Action to manually convert a selected PLT to a GeoTIFF."""
+        plt_path = self.vars.get('plt_file_path').get()
+        if not plt_path or not Path(plt_path).exists():
+            messagebox.showwarning("Missing File", "Please select a valid .PLT file first.")
+            return
+            
+        self.log(f"\n--- STARTING ACTION: EXPORT TIF ---")
+        try:
+            from src.geotiff_exporter import GeotiffExporter
+            exporter = GeotiffExporter(self.config)
+            success, msg = exporter.export(plt_path)
+            
+            if success:
+                self.log(f"[SUCCESS] {msg}")
+                messagebox.showinfo("Export Complete", msg)
+            else:
+                self.log(f"[ERROR] {msg}")
+                messagebox.showerror("Export Failed", msg)
+        except ImportError:
+            err = "Missing required libraries. Run: pip install rasterio pyproj scipy numpy pandas"
+            self.log(f"[ERROR] {err}")
+            messagebox.showerror("Dependency Error", err)
+        except Exception as e:
+            self.log(f"[ERROR] Export failed: {e}")
+            messagebox.showerror("Error", str(e))
+        finally:
+            self.log(f"--- FINISHED ACTION: EXPORT TIF ---\n")
+
+    def create_post_processing_tab(self, parent):
+        f = ttk.LabelFrame(parent, text="Visualization & Export", padding=10)
+        f.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        row_f = ttk.Frame(f)
+        row_f.pack(fill='x', pady=10)
+        
+        ttk.Label(row_f, text="Output file path (.PLT):", width=20).pack(side='left')
+        self.vars['plt_file_path'] = tk.StringVar(value="")
+        ttk.Entry(row_f, textvariable=self.vars['plt_file_path']).pack(side='left', expand=True, fill='x', padx=5)
+        
+        ttk.Button(row_f, text="...", width=4, command=self.browse_plt_file).pack(side='left', padx=2)
+        
+        # Action Buttons Row
+        btn_frame = ttk.Frame(f)
+        btn_frame.pack(pady=10)
+        
+        btn_plot = ttk.Button(btn_frame, text="📊 SimplePlot", command=self.run_simple_plot)
+        btn_plot.pack(side='left', padx=10)
+        ToolTip(btn_plot, "Generates a basic 2D contour plot window for quick checks.")
+        
+        btn_tif = ttk.Button(btn_frame, text="🗺️ Export to GeoTIFF", command=self.run_export_tif)
+        btn_tif.pack(side='left', padx=10)
+        ToolTip(btn_tif, "Converts the selected .PLT file into a GIS-ready raster image (.tif).")
 
     # --- HELPERS ---
     def add_entry(self, p, l, v, d):
         f=ttk.Frame(p); f.pack(fill='x', pady=2)
         ttk.Label(f, text=l, width=15).pack(side='left')
         val=tk.StringVar(value=str(d)); self.vars[v]=val
-        ttk.Entry(f, textvariable=val).pack(side='right', expand=True, fill='x')
+        entry = ttk.Entry(f, textvariable=val)
+        entry.pack(side='right', expand=True, fill='x')
+        return entry
     
     def add_file_picker(self, p, l, v, d, t):
         f=ttk.Frame(p); f.pack(fill='x', pady=2)
