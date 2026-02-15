@@ -11,7 +11,7 @@ QGIS plugin for source definitions underway.
 
 
 ## ✨ Key Features
-* **Modern GUI Controller:** Manage projects, coordinates, and execution phases from a unified Tkinter interface.
+* **GUI:** Manage projects, coordinates, and execution phases from a unified Tkinter interface.
 * **GIS-Ready Inventories (WKT):** Define complex Area, Line, and Point sources using standard Well-Known Text (WKT). Easily copy-paste geometries directly from QGIS or ArcGIS.
 * **Automated GeoTIFF Export:** AERMOD `.PLT` output files are automatically converted into georeferenced high-resolution `.tif` rasters for instant drag-and-drop visualization in your GIS software.
 * **Multi-Year Automation:** Loops through multiple years (e.g., 2020-2024) of meteorological data and modeling runs automatically.
