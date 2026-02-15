@@ -1,172 +1,173 @@
 import pandas as pd
-from shapely import wkt
-from shapely.geometry import LineString, Polygon
-from geopy.distance import geodesic
 from pathlib import Path
+import pyproj
+from shapely import wkt
 
 class InventoryManager:
     def __init__(self, config):
         self.cfg = config
-        self.center_lat = config['location']['latitude']
-        self.center_lon = config['location']['longitude']
-        self.base_elev = config['location'].get('elevation', 0)
-        self.target_pollutant = config['aermod_params']['pollutant']
+        self.inv_paths = config.get('inventory', {})
         
-        self.inventory_dir = Path(__file__).parent.parent.resolve() / "data" / "inventory"
+        # Site Location (WGS84)
+        lat = float(self.cfg['location'].get('latitude', 0.0))
+        lon = float(self.cfg['location'].get('longitude', 0.0))
         
-        # File definitions
-        self.files = {
-            'point': self.inventory_dir / "point_sources.csv",
-            'area': self.inventory_dir / "area_sources.csv",
-            'line': self.inventory_dir / "line_sources.csv"
-        }
+        # Dynamically determine UTM Zone based on Longitude
+        zone = int((lon + 180) / 6) + 1
+        south = lat < 0
+        
+        # Setup Coordinate Transformers (WGS84 -> UTM)
+        self.wgs84 = pyproj.CRS("EPSG:4326")
+        utm_str = f"+proj=utm +zone={zone} {'+south' if south else ''} +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
+        self.utm_crs = pyproj.CRS.from_string(utm_str)
+        self.transformer = pyproj.Transformer.from_crs(self.wgs84, self.utm_crs, always_xy=True)
+        
+        # Calculate Site Center in UTM (This acts as the 0,0 origin on our AERMOD grid)
+        self.center_x, self.center_y = self.transformer.transform(lon, lat)
 
-    def _latlon_to_xy(self, lat, lon):
-        """ Converts Lat/Lon to Local X/Y Meters (relative to site center) """
-        dist_y = geodesic((self.center_lat, self.center_lon), (lat, self.center_lon)).meters
-        if lat < self.center_lat: dist_y = -dist_y
+    def _convert_coords(self, lon, lat):
+        """Converts WGS84 to UTM, then shifts to be relative to the Site Center (0,0)"""
+        try:
+            x, y = self.transformer.transform(float(lon), float(lat))
+            rel_x = x - self.center_x
+            rel_y = y - self.center_y
+            return rel_x, rel_y
+        except Exception as e:
+            print(f"[WARNING] Coordinate conversion failed for {lon}, {lat}: {e}")
+            return 0.0, 0.0
 
-        dist_x = geodesic((self.center_lat, self.center_lon), (self.center_lat, lon)).meters
-        if lon < self.center_lon: dist_x = -dist_x
+    def generate_all_sources(self, pollutant):
+        """
+        Parses inventory files, extracts WKT geometries, 
+        and generates the SO block for the specified pollutant.
+        """
+        so_block = ["SO STARTING"]
+        src_ids = []
+        
+        # ==========================================
+        # 1. POINT SOURCES
+        # ==========================================
+        pt_path = Path(self.inv_paths.get('point', ''))
+        if pt_path.exists():
+            try:
+                df = pd.read_csv(pt_path)
+                for _, row in df.iterrows():
+                    rate = float(row.get(pollutant, 0.0)) if pd.notna(row.get(pollutant)) else 0.0
+                    
+                    if rate > 0:
+                        sid = str(row['source_id']).strip().replace(" ", "_")
+                        src_ids.append(sid)
+                        
+                        # Parse WKT Point
+                        geom = wkt.loads(str(row['WKT']).strip())
+                        x, y = self._convert_coords(geom.x, geom.y)
+                        
+                        elev = float(row.get('elevation', 0.0))
+                        hs = float(row.get('stack_height', 0.0))
+                        ts = float(row.get('stack_temp_k', 293.0))
+                        vs = float(row.get('stack_velocity', 0.0))
+                        ds = float(row.get('stack_diameter', 0.0))
+                        
+                        so_block.append(f"   LOCATION {sid} POINT {x:.2f} {y:.2f} {elev:.1f}")
+                        so_block.append(f"   SRCPARAM {sid} {rate:.6f} {hs:.2f} {ts:.2f} {vs:.2f} {ds:.2f}")
+            except Exception as e:
+                print(f"[ERROR] Failed reading point sources: {e}")
+
+        # ==========================================
+        # 2. AREA SOURCES (Now handles True Polygons)
+        # ==========================================
+        ar_path = Path(self.inv_paths.get('area', ''))
+        if ar_path.exists():
+            try:
+                df = pd.read_csv(ar_path)
+                for _, row in df.iterrows():
+                    rate = float(row.get(pollutant, 0.0)) if pd.notna(row.get(pollutant)) else 0.0
+                    
+                    if rate > 0:
+                        sid = str(row['source_id']).strip().replace(" ", "_")
+                        src_ids.append(sid)
+                        
+                        # Parse WKT Polygon
+                        geom = wkt.loads(str(row['WKT']).strip())
+                        
+                        # Extract the vertices (exterior ring)
+                        coords = list(geom.exterior.coords)
+                        
+                        # WKT closes the loop by repeating the first coordinate at the end. 
+                        # AERMOD doesn't want the duplicated closure point.
+                        if coords[0] == coords[-1]:
+                            coords = coords[:-1]
+                            
+                        num_vertices = len(coords)
+                        
+                        # Convert all vertices to relative UTM
+                        utm_coords = [self._convert_coords(lon, lat) for lon, lat in coords]
+                        
+                        # The LOCATION keyword for AREAPOLY takes the first vertex (x_init, y_init)
+                        x_init, y_init = utm_coords[0]
+                        
+                        elev = float(row.get('elevation', 0.0))
+                        rel_ht = float(row.get('release_height', 0.0))
+                        szinit = float(row.get('szinit', 0.0))
+                        
+                        so_block.append(f"   LOCATION {sid} AREAPOLY {x_init:.2f} {y_init:.2f} {elev:.1f}")
+                        so_block.append(f"   SRCPARAM {sid} {rate:.6f} {rel_ht:.2f} {num_vertices} {szinit:.2f}")
+                        
+                        # Generate AREAVERT lines. Chunk to max 4 points per line to avoid Fortran line limits
+                        vert_str = ""
+                        for i, (x, y) in enumerate(utm_coords):
+                            vert_str += f"{x:.2f} {y:.2f} "
+                            # Write line if we have 4 pairs, or if it's the last vertex
+                            if (i + 1) % 4 == 0 or (i + 1) == num_vertices:
+                                so_block.append(f"   AREAVERT {sid} {vert_str.strip()}")
+                                vert_str = ""
+            except Exception as e:
+                print(f"[ERROR] Failed reading area sources: {e}")
+
+        # ==========================================
+        # 3. LINE SOURCES
+        # ==========================================
+        ln_path = Path(self.inv_paths.get('line', ''))
+        if ln_path.exists():
+            try:
+                df = pd.read_csv(ln_path)
+                for _, row in df.iterrows():
+                    rate = float(row.get(pollutant, 0.0)) if pd.notna(row.get(pollutant)) else 0.0
+                    
+                    if rate > 0:
+                        sid = str(row['source_id']).strip().replace(" ", "_")
+                        src_ids.append(sid)
+                        
+                        # Parse WKT Linestring
+                        geom = wkt.loads(str(row['WKT']).strip())
+                        start_coord = geom.coords[0]
+                        end_coord = geom.coords[-1]
+                        
+                        x1, y1 = self._convert_coords(start_coord[0], start_coord[1])
+                        x2, y2 = self._convert_coords(end_coord[0], end_coord[1])
+                        
+                        elev = float(row.get('elevation', 0.0))
+                        rel_ht = float(row.get('release_height', 0.0))
+                        width = float(row.get('width_m', 10.0))
+                        szinit = float(row.get('szinit', 0.0))
+                        
+                        so_block.append(f"   LOCATION {sid} LINE {x1:.2f} {y1:.2f} {x2:.2f} {y2:.2f} {elev:.1f}")
+                        so_block.append(f"   SRCPARAM {sid} {rate:.6f} {rel_ht:.2f} {width:.2f} {szinit:.2f}")
+            except Exception as e:
+                print(f"[ERROR] Failed reading line sources: {e}")
+
+        # ==========================================
+        # GROUPING
+        # ==========================================
+        if src_ids:
+            # 'ALL' is a reserved group name. Do not list individual IDs after it.
+            so_block.append("   SRCGROUP ALL")
+        else:
+            print(f"[WARNING] No active sources found for {pollutant}. Adding dummy source.")
+            so_block.append("   LOCATION DUMMY POINT 0.0 0.0 0.0")
+            so_block.append("   SRCPARAM DUMMY 0.0 10.0 300.0 1.0 1.0")
+            so_block.append("   SRCGROUP ALL")
             
-        return dist_x, dist_y
-
-    def _should_skip(self, row_poll):
-        """ Checks if pollutant matches the run target """
-        p = str(row_poll).strip().upper()
-        t = str(self.target_pollutant).strip().upper()
-        return (p != 'ALL') and (p != t)
-
-    # ==========================
-    # 1. POINT SOURCES
-    # ==========================
-    def get_point_sources(self):
-        f = self.files['point']
-        if not f.exists(): return []
+        so_block.append("SO FINISHED")
         
-        print(f"    -> Loading Points: {f.name}")
-        df = pd.read_csv(f)
-        lines = []
-        
-        for _, row in df.iterrows():
-            if self._should_skip(row['pollutant']): continue
-
-            try:
-                geom = wkt.loads(row['wkt_geometry'])
-                x, y = self._latlon_to_xy(geom.y, geom.x)
-                
-                sid = row['source_id']
-                elev = row.get('elevation_base', self.base_elev)
-                
-                # Cards
-                lines.append(f"   LOCATION  {sid} POINT {x:.1f} {y:.1f} {elev}")
-                lines.append(f"   SRCPARAM  {sid} {row['emission_rate_gs']} {row['stack_height_m']} {row['temp_k']} {row['velocity_ms']} {row['diameter_m']}")
-            except Exception as e:
-                print(f"[WARN] Bad Point {row.get('source_id')}: {e}")
-
-        return lines
-
-    # ==========================
-    # 2. AREA SOURCES (AREAPOLY)
-    # ==========================
-    def get_area_sources(self):
-        f = self.files['area']
-        if not f.exists(): return []
-
-        print(f"    -> Loading Areas: {f.name}")
-        df = pd.read_csv(f)
-        lines = []
-
-        for _, row in df.iterrows():
-            if self._should_skip(row['pollutant']): continue
-
-            try:
-                poly = wkt.loads(row['wkt_geometry'])
-                if not isinstance(poly, Polygon): continue
-
-                sid = row['source_id']
-                elev = row.get('elevation_base', self.base_elev)
-                
-                coords = list(poly.exterior.coords)
-                if coords[0] == coords[-1]: coords.pop()
-                
-                # Count the actual vertices to provide to AERMOD
-                num_verts = len(coords)
-                
-                ref_x, ref_y = self._latlon_to_xy(coords[0][1], coords[0][0])
-                
-                # 1. LOCATION Card
-                lines.append(f"   LOCATION  {sid} AREAPOLY {ref_x:.1f} {ref_y:.1f} {elev}")
-
-                # 2. SRCPARAM Card 
-                # FIX: Added {num_verts} after release_height_m
-                lines.append(f"   SRCPARAM  {sid} {row['emission_flux_gsm2']} {row['release_height_m']} {num_verts} {row.get('init_sz_m', 0.0)}")
-
-                # 3. AREAVERT Cards
-                for lon, lat in coords:
-                    vx, vy = self._latlon_to_xy(lat, lon)
-                    lines.append(f"   AREAVERT  {sid} {vx:.1f} {vy:.1f}")
-                    
-            except Exception as e:
-                print(f"[WARN] Bad Area {row.get('source_id')}: {e}")
-        
-        return lines
-    # ==========================
-    # 3. LINE SOURCES (Splitting Segments)
-    # ==========================
-    def get_line_sources(self):
-        f = self.files['line']
-        if not f.exists(): return []
-
-        print(f"    -> Loading Lines: {f.name}")
-        df = pd.read_csv(f)
-        lines = []
-
-        for _, row in df.iterrows():
-            if self._should_skip(row['pollutant']): continue
-
-            try:
-                line = wkt.loads(row['wkt_geometry'])
-                if not isinstance(line, LineString): continue
-
-                base_id = row['source_id']
-                elev = row.get('elevation_base', self.base_elev)
-                width = row['width_m']
-                
-                # Iterate through segments (Point A -> Point B)
-                coords = list(line.coords)
-                for i in range(len(coords) - 1):
-                    # Create a unique ID for each segment (ROAD01_S1, ROAD01_S2)
-                    seg_id = f"{base_id}_S{i+1}"
-                    # Truncate ID if > 8 chars (AERMOD Legacy limit) or keep clean
-                    # Modern AERMOD allows longer IDs, but let's keep it safe
-                    
-                    p1_lon, p1_lat = coords[i]
-                    p2_lon, p2_lat = coords[i+1]
-                    
-                    x1, y1 = self._latlon_to_xy(p1_lat, p1_lon)
-                    x2, y2 = self._latlon_to_xy(p2_lat, p2_lon)
-
-                    # LOCATION ID LINE X1 Y1 X2 Y2 ELEV
-                    lines.append(f"   LOCATION  {seg_id} LINE {x1:.1f} {y1:.1f} {x2:.1f} {y2:.1f} {elev}")
-                    
-                    # SRCPARAM ID EmisRate RelHgt Width
-                    lines.append(f"   SRCPARAM  {seg_id} {row['emission_rate_gs']} {row['release_height_m']} {width}")
-
-            except Exception as e:
-                print(f"[WARN] Bad Line {row.get('source_id')}: {e}")
-
-        return lines
-
-    def generate_all_sources(self):
-        """ Helper to get everything at once """
-        all_lines = ["SO STARTING", "   ELEVUNIT METERS"]
-        
-        all_lines.extend(self.get_point_sources())
-        all_lines.extend(self.get_area_sources())
-        all_lines.extend(self.get_line_sources())
-        
-        all_lines.append("   SRCGROUP  ALL")
-        all_lines.append("SO FINISHED")
-        
-        return all_lines
+        return so_block

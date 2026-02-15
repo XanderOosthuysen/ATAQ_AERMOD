@@ -1,0 +1,54 @@
+project:
+  name: Johannesburg_Test
+  years:
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  station_name: JHB_Braamfontein
+  description: Baseline air quality assessment
+  data_source: ERA5
+  user_sfc: ''
+  user_pfl: ''
+location:
+  latitude: -26.2041
+  longitude: 28.0473
+  elevation: 1600.0
+  area_buffer: 0.25
+processing:
+  ua_format: IGRA
+paths:
+  raw_dir: data/met/raw
+  processed_dir: data/met/processed
+  interim_dir: data/met/interim
+  output_dir: data/model_output
+  inventory_dir: data/inventory
+  aermet_exe: bin/aermet
+  aermod_exe: bin/aermod
+aermet_params:
+  surf_id: '99999'
+  ua_id: '99999'
+  sectors:
+  - start: 0
+    end: 360
+    albedo: 0.18
+    bowen: 1.0
+    roughness: 0.05
+aermod_params:
+  receptor_grid:
+    type: cartesian
+    range_m: 2000
+    spacing_m: 100
+  pollutants:
+    SO2:
+      enabled: true
+      avg_times:
+      - '1'
+      - '24'
+inventory:
+  point: data/inventory/Johannesburg_Test/point_sources.csv
+  area: data/inventory/Johannesburg_Test/area_sources.csv
+  line: data/inventory/Johannesburg_Test/line_sources.csv
+download:
+  request_timeout: 300

@@ -1,0 +1,82 @@
+# ==========================================
+# ATAQ AERMOD - Project Configuration
+# ==========================================
+
+project:
+  name: "Johannesburg_Test"
+  years: [2020,2021,2022,2023,2024] 
+  station_name: "JHB_Braamfontein"
+  description: "Baseline air quality assessment"
+  data_source: "ERA5" # Options: ERA5, USER
+  user_sfc: "" # Path to .SFC if data_source is USER
+  user_pfl: "" # Path to .PFL if data_source is USER
+
+location:
+  # South is Negative, West is Negative
+  latitude: -26.2041
+  longitude: 28.0473
+  elevation: 1600.0  # Meters above sea level
+  area_buffer: 0.25  # Buffer in degrees (0.25 deg is approx 25km)
+
+# ==========================================
+# Data Processing Options
+# ==========================================
+processing:
+  # Options: "FSL" or "IGRA"
+  # IGRA is recommended for AERMET v21DRF and later.
+  # FSL currently not working reliably with recent AERMET versions
+  ua_format: "IGRA"
+
+paths:
+  # Base Directories (Relative to project root)
+  raw_dir: "data/met/raw"
+  processed_dir: "data/met/processed"
+  interim_dir: "data/met/interim"
+  output_dir: "data/model_output"
+  inventory_dir: "data/inventory"
+  
+  # Executables
+  aermet_exe: "bin/aermet"
+  aermod_exe: "bin/aermod"
+
+# ==========================================
+# AERMET (Met Processor) Settings
+# ==========================================
+aermet_params:
+  surf_id: "99999"
+  ua_id: "99999"
+  
+  # Surface Characteristics
+  sectors:
+    - start: 0
+      end: 360
+      albedo: 0.18      # Grassland
+      bowen: 1.0        # Moist
+      roughness: 0.05   # Roughness Length
+
+# ==========================================
+# AERMOD (Dispersion Model) Settings
+# ==========================================
+aermod_params:
+  # The Grid: Where we measure concentrations
+  receptor_grid:
+    type: "cartesian"
+    range_m: 2000     # 2km box around source
+    spacing_m: 100    # Receptor every 100m
+  
+  # Pollutant Configuration (Managed by GUI)
+  pollutants:
+    SO2:
+      enabled: true
+      avg_times: ['1', '24']
+
+# ==========================================
+# Inventory Files (Managed by GUI/Setup)
+# ==========================================
+inventory:
+  point: "data/inventory/Johannesburg_Test/point_sources.csv"
+  area: "data/inventory/Johannesburg_Test/area_sources.csv"
+  line: "data/inventory/Johannesburg_Test/line_sources.csv"
+
+download:
+  request_timeout: 300
