@@ -16,7 +16,7 @@ QGIS plugin for source definitions underway.
 * **Automated GeoTIFF Export:** AERMOD `.PLT` output files are automatically converted into georeferenced high-resolution `.tif` rasters for instant drag-and-drop visualization in your GIS software.
 * **Multi-Year Automation:** Loops through multiple years (e.g., 2020-2024) of meteorological data and modeling runs automatically.
 * **ERA5 Met Processing Pipeline:** Fetches and processes surface and upper-air data from the ECMWF Climate Data Store.
-* **Robust Error Handling:** Auto-fixes "North Wind" vector issues and strict Fortran formatting requirements.
+* **Error Handling:** Auto-fixes "North Wind" vector issues and strict Fortran formatting requirements.
 
 ---
 
