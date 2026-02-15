@@ -108,6 +108,9 @@ While the GUI is the recommended way to use ATAQ AERMOD, the pipeline can be ful
 * **`--action visualize`**
   Generates a quick 2D Matplotlib contour plot (`.png`) of a specific `.PLT` file for rapid quality assurance without needing to open GIS software.
 
+## ⚠️ Disclaimer ##
+The end-user is ultimately responsible for ensuring the validity of the meteorological data, inventory inputs, and compliance with local regulatory modeling guidelines.
+
 ## Directory structure ##
 ```text
 ATAQ_AERMOD
