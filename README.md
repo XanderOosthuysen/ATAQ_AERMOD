@@ -7,6 +7,8 @@ An open-source Python interface designed to simplify and automate the execution 
 
 Developed with a focus on usability outside of the US, this tool prioritizes alternative meteorological data sources (like ERA5), multi-year automation, and GIS integration.
 
+QGIS plugin for source definitions underway.
+
 
 ## ✨ Key Features
 * **Modern GUI Controller:** Manage projects, coordinates, and execution phases from a unified Tkinter interface.
