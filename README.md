@@ -52,7 +52,7 @@ Alternativly:
 The easiest way to use ATAQ AERMOD  and to set up the binaries is via the graphical interface. However all scripts and the run_pipeline function can be used as well.
  
     python3 run_pipeline.py --gui 
-    #On windows: python run_pypeline.py --gui
+    #On windows: python run_pipeline.py --gui
 
 ### 4. Workflow
 1. Setup Env: Click the "Setup Env" button in the GUI to automatically download and compile the required AERMET and AERMOD Fortran binaries for your OS.
