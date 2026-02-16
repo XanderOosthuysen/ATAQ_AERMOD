@@ -87,16 +87,12 @@ def main():
     # PHASE 0: BUILD MODEL (Run Once)
     # ==========================================
     if args.action == 'setup_aermod':
-        print(f"\n[PHASE 0] Building AERMOD System via setup_env.py...")
-        setup_script = Path("setup_env.py").resolve()
-        if not setup_script.exists():
-            print(f"[ERROR] Could not find {setup_script}")
-            return
+        print(f"\n[PHASE 0] Setting up AERMOD System...")
         try:
-            subprocess.run([sys.executable, str(setup_script)], check=True)
-            print("\n[SUCCESS] Build Complete. Binaries should be in /bin folder.")
-        except subprocess.CalledProcessError as e:
-            print(f"\n[ERROR] Build failed with exit code {e.returncode}")
+            from src.setup_env import setup_environment
+            setup_environment()
+        except ImportError as e:
+            print(f"[ERROR] Could not import setup module. Ensure setup_env.py is in the src/ folder: {e}")
         return
     
 	# ==========================================

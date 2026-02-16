@@ -25,6 +25,7 @@ import subprocess
 import os
 import threading
 import queue
+import sys
 
 class ToolTip(object):
     """Creates a tooltip for a given widget"""
@@ -253,15 +254,15 @@ class GUIHelper:
 
         def _run():
             try:
-                cmd = ["python3", "run_pipeline.py", "--action", action_name, "--config", config_name]
+                # FIX: Use sys.executable instead of "python3" or "python"
+                # This ensures the subprocess stays inside the virtual environment
+                cmd = [sys.executable, "run_pipeline.py", "--action", action_name, "--config", config_name]
                 
-                # Start subprocess and pipe output
                 process = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE,
                     text=True, cwd=self.project_root, bufsize=1, universal_newlines=True
                 )
                 
-                # Read output line by line
                 for line in process.stdout:
                     self.log(line.strip())
                 
@@ -280,14 +281,12 @@ class GUIHelper:
             finally:
                 self.is_running = False
                 self.log(f"--- FINISHED ACTION: {action_name.upper()} ---\n")
-                # Need to schedule UI update on main thread
                 self.root.after(0, self.update_button_states)
         
         threading.Thread(target=_run, daemon=True).start()
         
     # --- WIDGET CREATION ---
     def create_widgets(self):
-        # 1. Main Content Area (Top 2/3) - Using PanedWindow
         main_pane = tk.PanedWindow(self.root, orient=tk.VERTICAL)
         main_pane.pack(fill='both', expand=True)
 
@@ -344,7 +343,6 @@ class GUIHelper:
         self.console = scrolledtext.ScrolledText(bottom_frame, height=10, state='disabled', bg='#1e1e1e', fg='#00ff00', font=('Consolas', 9))
         self.console.pack(fill='both', expand=True, padx=5, pady=5)
 
-        # Force initial Sash position to 2/3 down (approx 600px)
         self.root.update_idletasks()
         try:
             main_pane.sash_place(0, 0, 600)
@@ -356,7 +354,22 @@ class GUIHelper:
 
     # --- Actions ---
     def confirm_and_setup(self):
-        if messagebox.askyesno("Confirm", "Setup Environment?"): self.run_pipeline_action("setup_aermod")
+        if platform.system() == "Windows":
+            bin_dir = self.project_root / "bin"
+            msg = (
+                "Windows OS detected.\n\n"
+                "This action will download the official pre-compiled EPA binaries:\n"
+                "- AERMOD: https://gaftp.epa.gov/Air/aqmg/SCRAM/models/preferred/aermod/aermod_exe.zip\n"
+                "- AERMET: https://gaftp.epa.gov/Air/aqmg/SCRAM/models/met/aermet/aermet_exe.zip\n"
+                f"They will be extracted to:\n{bin_dir}\n\n"
+                "Do you want to proceed?"
+            )
+            if messagebox.askyesno("Confirm Download", msg):
+                self.run_pipeline_action("setup_aermod")
+        else:
+            if messagebox.askyesno("Confirm Setup", "Setup Environment? This will download and compile source code."):
+                self.run_pipeline_action("setup_aermod")
+
     def run_setup_inventory(self): self.run_pipeline_action("setup_inventory")
     def run_download(self): self.run_pipeline_action("download")
     def run_met_process(self): self.run_pipeline_action("met_process")
@@ -375,8 +388,6 @@ class GUIHelper:
         try:
             from src.plotter import AermodPlotter
             plotter = AermodPlotter(self.config)
-            
-            # Using main thread for Matplotlib to avoid crashing UI
             success, msg = plotter.plot_file(plt_path)
             
             if success:
@@ -395,9 +406,36 @@ class GUIHelper:
         finally:
             self.log(f"--- FINISHED ACTION: PLOT ---\n")
 
+    def run_export_tif(self):
+        """Action to manually convert a selected PLT to a GeoTIFF."""
+        plt_path = self.vars.get('plt_file_path').get()
+        if not plt_path or not Path(plt_path).exists():
+            messagebox.showwarning("Missing File", "Please select a valid .PLT file first.")
+            return
+            
+        self.log(f"\n--- STARTING ACTION: EXPORT TIF ---")
+        try:
+            from src.geotiff_exporter import GeotiffExporter
+            exporter = GeotiffExporter(self.config)
+            success, msg = exporter.export(plt_path)
+            
+            if success:
+                self.log(f"[SUCCESS] {msg}")
+                messagebox.showinfo("Export Complete", msg)
+            else:
+                self.log(f"[ERROR] {msg}")
+                messagebox.showerror("Export Failed", msg)
+        except ImportError:
+            err = "Missing required libraries. Run: pip install rasterio pyproj scipy numpy pandas"
+            self.log(f"[ERROR] {err}")
+            messagebox.showerror("Dependency Error", err)
+        except Exception as e:
+            self.log(f"[ERROR] Export failed: {e}")
+            messagebox.showerror("Error", str(e))
+        finally:
+            self.log(f"--- FINISHED ACTION: EXPORT TIF ---\n")
 
     def open_instructions(self):
-        """Creates the instruction file if missing, then opens it."""
         instructions_path = self.project_root / "InventoryInstructions.txt"
         if not instructions_path.exists():
             content = """================================================\nATAQ AERMOD - EMISSIONS INVENTORY INSTRUCTIONS\n================================================\n\nGENERAL RULES:\n- source_id: Unique name for the source (No spaces, use underscores e.g., STACK_01).\n- WKT (Well-Known Text): Defines the geometry in WGS84 (Longitude Latitude). \n  You can copy-paste WKT directly from QGIS or other GIS software.\n- Pollutants (SO2, NO2, etc.): Leave as 0.0 if the source does not emit that pollutant.\n\n--- 1. POINT SOURCES (point_sources.csv) ---\nWKT Format     : POINT (Lon Lat)\nelevation      : Base elevation above sea level (meters)\nstack_height   : Release height above ground (meters)\nstack_temp_k   : Exhaust gas temperature (Kelvin)  [Celsius + 273.15]\nstack_velocity : Exhaust gas exit velocity (m/s)\nstack_diameter : Inner diameter of the stack (meters)\nPollutants     : Emission rate in grams per second (g/s)\n\n--- 2. AREA SOURCES (area_sources.csv) ---\nWKT Format     : POLYGON ((Lon Lat, Lon Lat, ...))\nelevation      : Base elevation above sea level (meters)\nrelease_height : Release height above ground (meters)\nszinit         : Initial vertical dispersion (meters). Usually 0.0 or release_height / 4.3.\nPollutants     : Emission rate in grams per second per square meter (g/s/m^2)\n\n--- 3. LINE SOURCES (line_sources.csv) ---\nWKT Format     : LINESTRING (Lon Lat, Lon Lat, ...)\nelevation      : Base elevation above sea level (meters)\nrelease_height : Release height above ground (meters)\nwidth_m        : Width of the road/line (meters)\nszinit         : Initial vertical dispersion (meters). Usually 0.0.\nPollutants     : Emission rate in grams per second per square meter (g/s/m^2)\n"""
@@ -410,7 +448,6 @@ class GUIHelper:
         self.update_button_states()
 
     def update_button_states(self):
-        # If running, DISABLE ALL ACTION BUTTONS
         if self.is_running:
             state = 'disabled'
             if hasattr(self, 'btn_setup'): self.btn_setup.config(state=state)
@@ -422,12 +459,10 @@ class GUIHelper:
             if hasattr(self, 'btn_init_inv'): self.btn_init_inv.config(state=state)
             return
 
-        # --- If NOT running, apply normal logic ---
         if hasattr(self, 'btn_setup'): self.btn_setup.config(state='normal')
         if hasattr(self, 'btn_save'): self.btn_save.config(state='normal')
         if hasattr(self, 'btn_init_inv'): self.btn_init_inv.config(state='normal')
         
-        # AERMOD is now always available when not running
         if hasattr(self, 'btn_aermod'): self.btn_aermod.config(state='normal')
 
         try:
@@ -438,7 +473,6 @@ class GUIHelper:
             if hasattr(self, 'btn_proc'): self.btn_proc.config(state=era_state)
             if hasattr(self, 'btn_aermet'): self.btn_aermet.config(state=era_state)
             
-            # Toggle User Met Inputs
             u_state = 'normal' if mode == 'USER' else 'disabled'
             for child in self.frm_user_met.winfo_children():
                 try: child.configure(state=u_state)
@@ -468,10 +502,8 @@ class GUIHelper:
         ttk.Button(win, text="Save", command=save).pack(pady=15)
 
     def browse_plt_file(self):
-        """Dedicated file browser for PLT files, defaulting to the model_output directory"""
         proj_name = self.config.get('project', {}).get('name', 'MyProject')
         
-        # Try to open directly in the project's specific output folder
         init_dir = self.project_root / "data" / "model_output" / proj_name
         if not init_dir.exists():
             init_dir = self.project_root / "data" / "model_output"
@@ -588,35 +620,6 @@ class GUIHelper:
             c+=1
             if c>1: c=0; r+=1
 
-    def run_export_tif(self):
-        """Action to manually convert a selected PLT to a GeoTIFF."""
-        plt_path = self.vars.get('plt_file_path').get()
-        if not plt_path or not Path(plt_path).exists():
-            messagebox.showwarning("Missing File", "Please select a valid .PLT file first.")
-            return
-            
-        self.log(f"\n--- STARTING ACTION: EXPORT TIF ---")
-        try:
-            from src.geotiff_exporter import GeotiffExporter
-            exporter = GeotiffExporter(self.config)
-            success, msg = exporter.export(plt_path)
-            
-            if success:
-                self.log(f"[SUCCESS] {msg}")
-                messagebox.showinfo("Export Complete", msg)
-            else:
-                self.log(f"[ERROR] {msg}")
-                messagebox.showerror("Export Failed", msg)
-        except ImportError:
-            err = "Missing required libraries. Run: pip install rasterio pyproj scipy numpy pandas"
-            self.log(f"[ERROR] {err}")
-            messagebox.showerror("Dependency Error", err)
-        except Exception as e:
-            self.log(f"[ERROR] Export failed: {e}")
-            messagebox.showerror("Error", str(e))
-        finally:
-            self.log(f"--- FINISHED ACTION: EXPORT TIF ---\n")
-
     def create_post_processing_tab(self, parent):
         f = ttk.LabelFrame(parent, text="Visualization & Export", padding=10)
         f.pack(fill='both', expand=True, padx=10, pady=10)
@@ -630,7 +633,6 @@ class GUIHelper:
         
         ttk.Button(row_f, text="...", width=4, command=self.browse_plt_file).pack(side='left', padx=2)
         
-        # Action Buttons Row
         btn_frame = ttk.Frame(f)
         btn_frame.pack(pady=10)
         
