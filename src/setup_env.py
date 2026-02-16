@@ -117,7 +117,7 @@ def setup_environment(config=None):
         
         urls = {
             "AERMOD": "https://gaftp.epa.gov/Air/aqmg/SCRAM/models/preferred/aermod/aermod_exe.zip",
-            "AERMET": "https://gaftp.epa.gov/Air/aqmg/SCRAM/models/preferred/aermet/aermet_exe.zip"
+            "AERMET": "https://gaftp.epa.gov/Air/aqmg/SCRAM/models/met/aermet/aermet_exe.zip"
         }
         
         # Display Information
