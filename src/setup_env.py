@@ -21,6 +21,7 @@ import zipfile
 import urllib.request
 import subprocess
 import shutil
+import platform
 from pathlib import Path
 
 # --- CONFIGURATION ---
@@ -29,8 +30,6 @@ AERMET_SRC_URL = "https://gaftp.epa.gov/Air/aqmg/SCRAM/models/met/aermet/aermet_
 
 # AERMOD (Dispersion Model) - Version 24142
 AERMOD_SRC_URL = "https://gaftp.epa.gov/Air/aqmg/SCRAM/models/preferred/aermod/aermod_source.zip"
-
-
 
 def check_gfortran():
     """Checks if gfortran is installed and available in PATH."""
@@ -54,140 +53,176 @@ def compile_linux(bin_dir, src_dir, exe_name):
     print(f"   Found {len(src_files)} source files for {exe_name}.")
     
     # 2. Compile loop (The "Dependency Solver")
-    # We try to compile files. If one fails (likely due to missing module), 
-    # we push it to the back of the queue.
     queue = src_files[:]
     obj_files = []
-    max_retries = len(src_files) * 3  # Allow for complex dependency chains
-    loops = 0
+    max_retries = len(src_files) * 3
+    retries = 0
     
-    # Clean up old object files/modules in the source dir to prevent conflicts
-    for junk in src_dir.glob("*.o"): os.remove(junk)
-    for junk in src_dir.glob("*.mod"): os.remove(junk)
-
-    print("   Starting iterative compilation...")
-    
-    while queue and loops < max_retries:
-        loops += 1
+    while queue and retries < max_retries:
         current_file = queue.pop(0)
-        
-        # Object file name: source.f90 -> source.o
         obj_file = current_file.with_suffix('.o')
         
-        # Compile command: gfortran -c -O2 source.f90 -o source.o
-        # -J defines where to put/read .mod files (keep them in src_dir)
         cmd = [
-            "gfortran", "-c", "-O2", "-static",
+            "gfortran", 
+            "-c", str(current_file), 
             "-J", str(src_dir), 
-            str(current_file), "-o", str(obj_file)
+            "-I", str(src_dir), 
+            "-o", str(obj_file)
         ]
         
         try:
             subprocess.run(cmd, check=True, capture_output=True)
             obj_files.append(obj_file)
-            # print(f"      Compiled: {current_file.name}")
         except subprocess.CalledProcessError:
             # If it fails, push to back of queue to try again later
             queue.append(current_file)
-            # print(f"      Deferred: {current_file.name} (dependency missing?)")
-
+            
+        retries += 1
+        
     if queue:
         print(f"[ERROR] Could not compile the following files after {max_retries} attempts:")
         for f in queue:
             print(f"  - {f.name}")
         return False
-
+        
     # 3. Link it all together
-    print(f"   Linking {len(obj_files)} object files into {exe_name}...")
-    target_exe = bin_dir / exe_name
-    
-    # Link command
-    link_cmd = ["gfortran", "-static", "-o", str(target_exe)] + [str(o) for o in obj_files]
+    print(f"   Linking {exe_name}...")
+    final_exe = bin_dir / exe_name
+    link_cmd = ["gfortran"] + [str(o) for o in obj_files] + ["-o", str(final_exe)]
     
     try:
-        subprocess.run(link_cmd, check=True)
-        print(f"   [SUCCESS] Executable created: {target_exe}")
-        
-        # Make executable
-        os.chmod(target_exe, 0o755)
+        subprocess.run(link_cmd, check=True, capture_output=True)
+        print(f"   [SUCCESS] Compiled {exe_name} successfully.")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"[ERROR] Linking failed: {e}")
+        print(f"[ERROR] Linking failed for {exe_name}: {e}")
         return False
 
-def setup_aermod():
-    base_dir = Path(__file__).parent.resolve()
-    bin_dir = base_dir / "bin"
-    bin_dir.mkdir(exist_ok=True)
+def setup_environment(config=None):
+    """
+    Sets up the AERMOD/AERMET executables.
+    On Windows: Prompts and downloads pre-compiled binaries from the EPA.
+    On Linux/macOS: Downloads source code and compiles it.
+    """
+    print("--- STARTING AERMOD ENVIRONMENT SETUP ---")
     
-    print("--- AERMOD/AERMET SETUP (LINUX) ---")
+    project_root = Path(__file__).parent.parent.resolve()
+    bin_dir = project_root / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
     
-    if not sys.platform.startswith('linux'):
-        print("[ERROR] This script is optimized for Linux. For Windows, simply download the executables.")
-        return
-
-    if not check_gfortran():
-        print("[ERROR] 'gfortran' compiler not found.")
-        print("   Please run: sudo apt update && sudo apt install gfortran")
-        return
-
-    # =========================================================================
-    # BUILD AERMET
-    # =========================================================================
-    print("\n[1/2] Building AERMET...")
-    aermet_src_dir = bin_dir / 'aermet_source'
+    system = platform.system()
     
-    # Wipe and Re-create source dir
-    if aermet_src_dir.exists(): shutil.rmtree(aermet_src_dir)
-    aermet_src_dir.mkdir(exist_ok=True)
-    
-    try:
-        print(f"   Fetching: {AERMET_SRC_URL}")
-        zip_path = aermet_src_dir / "aermet_src.zip"
-        urllib.request.urlretrieve(AERMET_SRC_URL, zip_path)
+    if system == "Windows":
+        print("[INFO] Windows OS detected.")
         
-        with zipfile.ZipFile(zip_path, 'r') as z:
-            z.extractall(aermet_src_dir)
-        os.remove(zip_path)
-
-        # Handle nested zips (common in AERMET packages)
-        nested_zips = list(aermet_src_dir.rglob("*.zip"))
-        if nested_zips:
-            for nz in nested_zips:
-                with zipfile.ZipFile(nz, 'r') as z:
-                    z.extractall(aermet_src_dir)
-                os.remove(nz)
+        urls = {
+            "AERMOD": "https://gaftp.epa.gov/Air/aqmg/SCRAM/models/preferred/aermod/aermod_exe.zip",
+            "AERMET": "https://gaftp.epa.gov/Air/aqmg/SCRAM/models/preferred/aermet/aermet_exe.zip"
+        }
         
-        compile_linux(bin_dir, aermet_src_dir, "aermet")
-
-    except Exception as e:
-        print(f"[ERROR] AERMET Build Failed: {e}")
-
-    # =========================================================================
-    # BUILD AERMOD
-    # =========================================================================
-    print("\n[2/2] Building AERMOD...")
-    aermod_src_dir = bin_dir / 'aermod_source'
-    
-    if aermod_src_dir.exists(): shutil.rmtree(aermod_src_dir)
-    aermod_src_dir.mkdir(exist_ok=True)
-    
-    try:
-        print(f"   Fetching: {AERMOD_SRC_URL}")
-        zip_path = aermod_src_dir / "aermod_src.zip"
-        urllib.request.urlretrieve(AERMOD_SRC_URL, zip_path)
+        # Display Information
+        print("\nThe following official EPA binaries will be downloaded:")
+        for name, url in urls.items():
+            print(f"  - {name}: {url}")
+        print(f"\nDestination folder: {bin_dir}\n")
         
-        with zipfile.ZipFile(zip_path, 'r') as z:
-            z.extractall(aermod_src_dir)
-        os.remove(zip_path)
+        # If run directly in a terminal, ask for confirmation.
+        # If run via the GUI, bypass this (the GUI messagebox handles consent).
+        if sys.stdin.isatty():
+            ans = input("Do you want to proceed with the download? (y/n): ")
+            if ans.lower() not in ['y', 'yes']:
+                print("[ABORTED] User cancelled setup.")
+                return
         
-        # AERMOD often extracts into a subfolder, move files up if needed
-        # (Though compile_linux uses rglob so it finds them anywhere)
+        for name, url in urls.items():
+            zip_path = bin_dir / f"{name.lower()}.zip"
+            exe_path = bin_dir / f"{name.lower()}.exe"
+            
+            if exe_path.exists():
+                print(f"  -> {name} executable already exists. Skipping.")
+                continue
+                
+            print(f"  -> Downloading {name} from EPA SCRAM...")
+            try:
+                urllib.request.urlretrieve(url, zip_path)
+                
+                print(f"  -> Extracting {name}...")
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(bin_dir)
+                
+                if zip_path.exists():
+                    os.remove(zip_path)
+                    
+                print(f"  [SUCCESS] {name} installed successfully!")
+                
+            except Exception as e:
+                print(f"  [ERROR] Failed to download/extract {name}: {e}")
+                
+        print("--- WINDOWS SETUP COMPLETE ---")
         
-        compile_linux(bin_dir, aermod_src_dir, "aermod")
+    else:
+        print("[INFO] Linux/macOS detected.")
+        if not check_gfortran():
+            print("[ERROR] gfortran not found. Please install it first (e.g., sudo apt install gfortran).")
+            return
 
-    except Exception as e:
-        print(f"[ERROR] AERMOD Build Failed: {e}")
+        print("[INFO] Starting source compilation process...")
+        
+        # =========================================================================
+        # BUILD AERMET
+        # =========================================================================
+        print("\n[1/2] Building AERMET...")
+        aermet_src_dir = bin_dir / 'aermet_source'
+        
+        if aermet_src_dir.exists(): shutil.rmtree(aermet_src_dir)
+        aermet_src_dir.mkdir(exist_ok=True)
+        
+        try:
+            print(f"   Fetching: {AERMET_SRC_URL}")
+            zip_path = aermet_src_dir / "aermet_src.zip"
+            urllib.request.urlretrieve(AERMET_SRC_URL, zip_path)
+            
+            with zipfile.ZipFile(zip_path, 'r') as z:
+                z.extractall(aermet_src_dir)
+            os.remove(zip_path)
+
+            # Handle nested zips (common in AERMET packages)
+            nested_zips = list(aermet_src_dir.rglob("*.zip"))
+            if nested_zips:
+                for nz in nested_zips:
+                    with zipfile.ZipFile(nz, 'r') as z:
+                        z.extractall(aermet_src_dir)
+                    os.remove(nz)
+            
+            compile_linux(bin_dir, aermet_src_dir, "aermet")
+
+        except Exception as e:
+            print(f"[ERROR] AERMET Build Failed: {e}")
+
+        # =========================================================================
+        # BUILD AERMOD
+        # =========================================================================
+        print("\n[2/2] Building AERMOD...")
+        aermod_src_dir = bin_dir / 'aermod_source'
+        
+        if aermod_src_dir.exists(): shutil.rmtree(aermod_src_dir)
+        aermod_src_dir.mkdir(exist_ok=True)
+        
+        try:
+            print(f"   Fetching: {AERMOD_SRC_URL}")
+            zip_path = aermod_src_dir / "aermod_src.zip"
+            urllib.request.urlretrieve(AERMOD_SRC_URL, zip_path)
+            
+            with zipfile.ZipFile(zip_path, 'r') as z:
+                z.extractall(aermod_src_dir)
+            os.remove(zip_path)
+            
+            compile_linux(bin_dir, aermod_src_dir, "aermod")
+            
+        except Exception as e:
+            print(f"[ERROR] AERMOD Build Failed: {e}")
+            
+        print("[SUCCESS] Linux compilation completed.")
 
 if __name__ == "__main__":
-    main()
+    setup_environment()
