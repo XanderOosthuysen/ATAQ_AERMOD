@@ -27,7 +27,8 @@ Ensure you have Python 3.10+ installed.
     # Create and activate a virtual environment
     python3 -m venv aermod_env
     source aermod_env/bin/activate  
-    # On Windows use:     aermod_env\Scripts\activate
+    # On Windows use:     python3 -m venv aermod_env
+    # On Windows use: aermod_env\Scripts\activate
     
     # Install dependencies
     pip install -r requirements.txt
@@ -51,7 +52,7 @@ Alternativly:
 The easiest way to use ATAQ AERMOD  and to set up the binaries is via the graphical interface. However all scripts and the run_pipeline function can be used as well.
  
     python3 run_pipeline.py --gui 
-    #On windows: python run_pupeline.py --gui
+    #On windows: python run_pypeline.py --gui
 
 ### 4. Workflow
 1. Setup Env: Click the "Setup Env" button in the GUI to automatically download and compile the required AERMET and AERMOD Fortran binaries for your OS.
