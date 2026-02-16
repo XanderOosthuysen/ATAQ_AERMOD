@@ -259,7 +259,7 @@ class GUIHelper:
                 cmd = [sys.executable, "run_pipeline.py", "--action", action_name, "--config", config_name]
                 
                 process = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE,
                     text=True, cwd=self.project_root, bufsize=1, universal_newlines=True
                 )
                 
@@ -360,7 +360,7 @@ class GUIHelper:
                 "Windows OS detected.\n\n"
                 "This action will download the official pre-compiled EPA binaries:\n"
                 "- AERMOD: https://gaftp.epa.gov/Air/aqmg/SCRAM/models/preferred/aermod/aermod_exe.zip\n"
-                "- AERMET: https://gaftp.epa.gov/Air/aqmg/SCRAM/models/preferred/aermet/aermet_exe.zip\n\n"
+                "- AERMET: https://gaftp.epa.gov/Air/aqmg/SCRAM/models/met/aermet/aermet_exe.zip\n"
                 f"They will be extracted to:\n{bin_dir}\n\n"
                 "Do you want to proceed?"
             )
