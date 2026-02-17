@@ -19,6 +19,7 @@ import cdsapi
 import os
 from pathlib import Path
 import shutil
+import sys
 
 class ERA5Downloader:
     def __init__(self, overwrite=False):
@@ -54,6 +55,8 @@ class ERA5Downloader:
         """
         Scans for existing files (e.g., era5_sfc_2023_01.zip)
         """
+        import sys  # Ensure sys is available for the TTY check
+
         count = 0
         for m in range(1, 13):
             # MATCHING YOUR NAMING CONVENTION HERE
@@ -63,11 +66,20 @@ class ERA5Downloader:
         
         if count == 0: return False 
 
-        if self.force_overwrite:
+        if getattr(self, 'force_overwrite', False):
             print(f"    [INFO] Force overwrite active. Deleting {count} existing files...")
             return True
 
         print(f"\n    [?] Found {count}/12 existing files for {year} in {save_dir.name}.")
+        
+        # --- NEW: GUI / Non-Interactive Check ---
+        # If there is no active terminal attached (like when running from the GUI),
+        # automatically answer 'Yes' to keeping existing data to prevent freezing.
+        if not sys.stdin.isatty():
+            print("        -> [GUI Mode] Auto-keeping existing files.")
+            return False
+
+        # --- EXISTING: Command Line Check ---
         while True:
             response = input("        Use existing data? [Y/n]: ").strip().lower()
             if response in ['', 'y', 'yes']:
