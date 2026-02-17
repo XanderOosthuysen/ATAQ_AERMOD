@@ -19,6 +19,7 @@ import subprocess
 import shutil
 import os
 import math
+import platform  # <-- Added platform import
 from pathlib import Path
 from src.inventory_manager import InventoryManager
 from src.geotiff_exporter import GeotiffExporter
@@ -39,6 +40,11 @@ class AermodRunner:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         
         self.exe_path = Path(config['paths']['aermod_exe']).resolve()
+        
+        # --- NEW: Append .exe on Windows if missing ---
+        if platform.system() == "Windows" and self.exe_path.suffix.lower() != '.exe':
+            self.exe_path = self.exe_path.with_suffix('.exe')
+            
         self.params = config['aermod_params']
 
     def _generate_receptors(self):
