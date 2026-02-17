@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import pandas as pd
 from pathlib import Path
+import platform
 
 class AermetRunner:
     def __init__(self, config):
@@ -44,7 +45,9 @@ class AermetRunner:
         self.params = config.get('aermet_params', {})
         if 'surf_id' not in self.params: self.params['surf_id'] = '99999'
         if 'ua_id' not in self.params: self.params['ua_id'] = '99999'
-
+        
+        if platform.system() == "Windows" and self.exe_path.suffix.lower() != '.exe':
+            self.exe_path = self.exe_path.with_suffix('.exe')
     def _prepare_onsite_data(self, csv_path):
         print(f"    -> Formatting Onsite Data in logs folder...")
         df = pd.read_csv(csv_path)

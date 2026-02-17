@@ -135,6 +135,7 @@ class GUIHelper:
     def save_config(self):
         # Update config dict from UI variables
         self.config['project']['name'] = self.vars['project_name'].get()
+        self.config['project']['station_name'] = self.vars['station_name'].get() # <-- NEW
         
         try:
             y_str = self.vars['years'].get().strip('[] ')
@@ -183,6 +184,7 @@ class GUIHelper:
     def refresh_ui_from_config(self):
         # Project
         self.vars['project_name'].set(self.config['project'].get('name', ''))
+        self.vars['station_name'].set(self.config['project'].get('station_name', 'Station')) # <-- NEW
         self.vars['years'].set(str(self.config['project'].get('years', [])).strip('[]'))
         self.vars['data_source'].set(self.config['project'].get('data_source', 'ERA5'))
         
@@ -524,16 +526,7 @@ class GUIHelper:
         self.add_entry(f, "Project Name:", "project_name", self.config['project'].get('name', 'MyProject'))
         self.add_entry(f, "Years:", "years", str(self.config['project'].get('years', [2024])).strip('[]'))
         
-        f = ttk.LabelFrame(parent, text="Location", padding=10)
-        f.pack(fill='x', pady=5, padx=10)
-        
-        lat_entry = self.add_entry(f, "Lat:", "lat", self.config['location'].get('latitude', 0.0))
-        ToolTip(lat_entry, "Format: Decimal Degrees (e.g. -26.204)\nCRS: WGS84 (EPSG:4326)\nNegative for Southern Hemisphere")
-        
-        lon_entry = self.add_entry(f, "Lon:", "lon", self.config['location'].get('longitude', 0.0))
-        ToolTip(lon_entry, "Format: Decimal Degrees (e.g. 28.047)\nCRS: WGS84 (EPSG:4326)")
-        
-        self.add_entry(f, "Elev:", "elev", self.config['location'].get('elevation', 0.0))
+        # LOCATION FRAME REMOVED FROM HERE
         
         f = ttk.LabelFrame(parent, text="Paths", padding=10)
         f.pack(fill='x', pady=5, padx=10)
@@ -543,6 +536,22 @@ class GUIHelper:
         self.add_file_picker(f, "AERMOD:", "aermod_exe", dmod, "EXE")
 
     def create_met_tab(self, parent):
+        # --- NEW LOCATION FRAME ---
+        loc_f = ttk.LabelFrame(parent, text="Met Station Location", padding=10)
+        loc_f.pack(fill='x', pady=5, padx=10)
+        
+        st_entry = self.add_entry(loc_f, "Station Name:", "station_name", self.config['project'].get('station_name', 'Station'))
+        ToolTip(st_entry, "Name of the meteorological station (e.g., JHB_Braamfontein).")
+        
+        lat_entry = self.add_entry(loc_f, "Lat:", "lat", self.config['location'].get('latitude', 0.0))
+        ToolTip(lat_entry, "Format: Decimal Degrees (e.g. -26.204)\nCRS: WGS84 (EPSG:4326)\nNegative for Southern Hemisphere")
+        
+        lon_entry = self.add_entry(loc_f, "Lon:", "lon", self.config['location'].get('longitude', 0.0))
+        ToolTip(lon_entry, "Format: Decimal Degrees (e.g. 28.047)\nCRS: WGS84 (EPSG:4326)")
+        
+        self.add_entry(loc_f, "Elev (m):", "elev", self.config['location'].get('elevation', 0.0))
+
+        # --- EXISTING SOURCE FRAME ---
         f = ttk.LabelFrame(parent, text="Source", padding=10)
         f.pack(fill='both', expand=True, padx=10, pady=10)
         self.vars['data_source'] = tk.StringVar(value=self.config['project'].get('data_source', 'ERA5'))
