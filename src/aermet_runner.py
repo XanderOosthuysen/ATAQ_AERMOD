@@ -45,7 +45,7 @@ class AermetRunner:
         self.params = config.get('aermet_params', {})
         if 'surf_id' not in self.params: self.params['surf_id'] = '99999'
         if 'ua_id' not in self.params: self.params['ua_id'] = '99999'
-        
+        self.exe_path = Path(config['paths']['aermet_exe']).resolve()
         if platform.system() == "Windows" and self.exe_path.suffix.lower() != '.exe':
             self.exe_path = self.exe_path.with_suffix('.exe')
     def _prepare_onsite_data(self, csv_path):
@@ -151,18 +151,15 @@ class AermetRunner:
         # 3. Create INP
         inp_name = self._write_input_file("upper_air.igra", onsite_name)
         
-        # 4. Find Binary
-        exe_path = self.project_root / "bin" / "aermet"
-        if os.name == 'nt': exe_path = exe_path.with_suffix('.exe')
-        
-        if not exe_path.exists():
-            print(f"[ERROR] Binary not found: {exe_path}")
+        # 4. Find Binary (Using the path we prepared in __init__)
+        if not self.exe_path.exists():
+            print(f"[ERROR] Binary not found: {self.exe_path}")
             return
 
         # 5. Execute
         try:
             print(f"    -> Executing AERMET in {self.run_dir.name}...")
-            result = subprocess.run([str(exe_path), inp_name], 
+            result = subprocess.run([str(self.exe_path), inp_name], 
                                     cwd=self.run_dir, 
                                     capture_output=True, text=True)
             
