@@ -72,7 +72,11 @@ class GUIHelper:
     def __init__(self, root):
         self.root = root
         self.root.title("ATAQ AERMOD Pipeline Controller")
-        self.root.geometry("900x900") 
+        self.root.geometry("900x900")
+        
+        self.vars = {}
+        self.vars['disp_env'] = tk.StringVar(value='RURAL')
+        self.vars['nox_method'] = tk.StringVar(value='NONE')
         
         # --- PATH ANCHORING ---
         self.project_root = Path(__file__).parent.parent.resolve()
@@ -83,9 +87,7 @@ class GUIHelper:
         
         # Default Config Path
         self.current_config_path = self.config_dir / "default.yaml"
-        
         self.config = {}
-        self.vars = {}
         self.pollutant_vars = {}
         self.pollutant_configs = {}
         self.pollutant_options = ["SO2", "NO2", "PM10", "PM2.5", "CO", "Pb", "OTHER"]
@@ -135,8 +137,13 @@ class GUIHelper:
     def save_config(self):
         # Update config dict from UI variables
         self.config['project']['name'] = self.vars['project_name'].get()
-        self.config['project']['station_name'] = self.vars['station_name'].get() # <-- NEW
-        
+        self.config['project']['station_name'] = self.vars['station_name'].get()
+        # Ensure the aermod_params dictionary exists
+        if 'aermod_params' not in self.config:
+            self.config['aermod_params'] = {}
+            
+        self.config['aermod_params']['dispersion_env'] = self.vars['disp_env'].get()
+        self.config['aermod_params']['nox_method'] = self.vars['nox_method'].get()
         try:
             y_str = self.vars['years'].get().strip('[] ')
             if y_str: self.config['project']['years'] = [int(y.strip()) for y in y_str.split(',')]
@@ -184,7 +191,7 @@ class GUIHelper:
     def refresh_ui_from_config(self):
         # Project
         self.vars['project_name'].set(self.config['project'].get('name', ''))
-        self.vars['station_name'].set(self.config['project'].get('station_name', 'Station')) # <-- NEW
+        self.vars['station_name'].set(self.config['project'].get('station_name', 'Station'))
         self.vars['years'].set(str(self.config['project'].get('years', [])).strip('[]'))
         self.vars['data_source'].set(self.config['project'].get('data_source', 'ERA5'))
         
@@ -214,7 +221,12 @@ class GUIHelper:
                 self.pollutant_configs[pol] = pols[pol].get('avg_times', ['1', '24'])
             else:
                 self.pollutant_configs[pol] = ['1', '24']
-
+        
+        # Control
+        # Load Control Pathway parameters
+        prms = self.config.get('aermod_params', {})
+        self.vars['disp_env'].set(prms.get('dispersion_env', 'RURAL'))
+        self.vars['nox_method'].set(prms.get('nox_method', 'NONE'))
         self.update_button_states()
 
     def load_project_dialog(self):
@@ -256,8 +268,6 @@ class GUIHelper:
 
         def _run():
             try:
-                # FIX: Use sys.executable instead of "python3" or "python"
-                # This ensures the subprocess stays inside the virtual environment
                 cmd = [sys.executable, "run_pipeline.py", "--action", action_name, "--config", config_name]
                 
                 process = subprocess.Popen(
@@ -314,8 +324,8 @@ class GUIHelper:
         self.tab_inv = ttk.Frame(self.notebook); self.notebook.add(self.tab_inv, text='3. Inventory')
         self.create_inventory_tab(self.tab_inv)
         
-        self.tab_pol = ttk.Frame(self.notebook); self.notebook.add(self.tab_pol, text='4. Pollutants')
-        self.create_analysis_tab(self.tab_pol)
+        self.tab_pol = ttk.Frame(self.notebook); self.notebook.add(self.tab_pol, text='4. Model settings')
+        self.create_model_settings_tab(self.tab_pol)
 
         self.tab_post = ttk.Frame(self.notebook); self.notebook.add(self.tab_post, text='5. Post-Processing')
         self.create_post_processing_tab(self.tab_post)
@@ -607,7 +617,16 @@ class GUIHelper:
         self.add_inv_row(f, "Area:", 'inv_area', cinv.get('area', str(def_path/"area_sources.csv")))
         self.add_inv_row(f, "Line:", 'inv_line', cinv.get('line', str(def_path/"line_sources.csv")))
 
-    def create_analysis_tab(self, parent):
+    def create_model_settings_tab(self, parent):
+        # Change 'tab4' to 'parent', and 'f' to 'co_frame'
+        co_frame = ttk.LabelFrame(parent, text="Control Pathway (CO)", padding=10)
+        co_frame.pack(fill='x', padx=10, pady=5)        
+        ttk.Label(co_frame, text="Dispersion Environment:").grid(row=0, column=0, sticky='w', pady=2, padx=5)
+        env_cb = ttk.Combobox(co_frame, textvariable=self.vars['disp_env'], values=["RURAL", "URBAN"], state="readonly", width=15)
+        env_cb.grid(row=0, column=1, sticky='w', pady=2)
+        ttk.Label(co_frame, text="NOx to NO2 Method:").grid(row=1, column=0, sticky='w', pady=2, padx=5)
+        nox_cb = ttk.Combobox(co_frame, textvariable=self.vars['nox_method'],values=["NONE", "ARM2", "PVMRM", "OLM"], state="readonly", width=15)
+        nox_cb.grid(row=1, column=1, sticky='w', pady=2)
         f = ttk.LabelFrame(parent, text="Pollutants", padding=10)
         f.pack(fill='both', expand=True, padx=10, pady=10)
         saved = self.config.get('aermod_params', {}).get('pollutants', {})
