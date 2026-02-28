@@ -618,15 +618,19 @@ class GUIHelper:
         self.add_inv_row(f, "Line:", 'inv_line', cinv.get('line', str(def_path/"line_sources.csv")))
 
     def create_model_settings_tab(self, parent):
-        # Change 'tab4' to 'parent', and 'f' to 'co_frame'
         co_frame = ttk.LabelFrame(parent, text="Control Pathway (CO)", padding=10)
         co_frame.pack(fill='x', padx=10, pady=5)        
+        
         ttk.Label(co_frame, text="Dispersion Environment:").grid(row=0, column=0, sticky='w', pady=2, padx=5)
         env_cb = ttk.Combobox(co_frame, textvariable=self.vars['disp_env'], values=["RURAL", "URBAN"], state="readonly", width=15)
         env_cb.grid(row=0, column=1, sticky='w', pady=2)
+        ToolTip(env_cb, "Select RURAL (default) or URBAN dispersion.\nURBAN modifies boundary layer profiles for heat island effects.")
+
         ttk.Label(co_frame, text="NOx to NO2 Method:").grid(row=1, column=0, sticky='w', pady=2, padx=5)
         nox_cb = ttk.Combobox(co_frame, textvariable=self.vars['nox_method'],values=["NONE", "ARM2", "PVMRM", "OLM"], state="readonly", width=15)
         nox_cb.grid(row=1, column=1, sticky='w', pady=2)
+        ToolTip(nox_cb, "Method for NOx to NO2 conversion.\nARM2 is the standard multi-tiered approach.")
+
         f = ttk.LabelFrame(parent, text="Pollutants", padding=10)
         f.pack(fill='both', expand=True, padx=10, pady=10)
         saved = self.config.get('aermod_params', {}).get('pollutants', {})
