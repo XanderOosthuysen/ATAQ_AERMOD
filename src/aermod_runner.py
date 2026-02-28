@@ -70,19 +70,54 @@ class AermodRunner:
         print(f"    -> Generating AERMOD.INP for {pollutant}...")
         
         avg_str = " ".join(avg_times)
+        
+        # Retrieve Control Pathway params
+        disp_env = self.params.get('dispersion_env', 'RURAL')
+        nox_method = self.params.get('nox_method', 'NONE')
+        
+        # Build MODELOPT dynamically
+        modelopt_opts = ["CONC", "FLAT"]
+        
+        # Only append NOx method if the pollutant is NO2 and it's not NONE
+        if pollutant == "NO2" and nox_method != "NONE":
+            modelopt_opts.append(nox_method)
+            
+        modelopt_str = " ".join(modelopt_opts)
+        
         co_block = [
             "CO STARTING",
             f"   TITLEONE  {self.project_name} - {self.year} - {pollutant}",
-            f"   MODELOPT  CONC FLAT", 
+            f"   MODELOPT  {modelopt_str}", 
             f"   AVERTIME  {avg_str}", 
             f"   POLLUTID  {pollutant}",
             "   RUNORNOT  RUN",
-            "   ERRORFIL  aermod.err",
-            "CO FINISHED"
         ]
+        
+        if disp_env == "URBAN":
+            co_block.append("   URBANOPT  1000000") 
+            
+        co_block.append("   ERRORFIL  aermod.err")
+        co_block.append("CO FINISHED")
 
         inv_man = InventoryManager(self.cfg)
         so_block = inv_man.generate_all_sources(pollutant)
+        
+        # FIX: URBANSRC must be inserted BEFORE the SRCGROUP keyword
+        if disp_env == "URBAN":
+            insert_idx = -1
+            # Find the line index where SRCGROUP is first declared
+            for i, line in enumerate(so_block):
+                if "SRCGROUP" in line:
+                    insert_idx = i
+                    break
+            
+            # Insert URBANSRC right before SRCGROUP, otherwise put it at the end
+            if insert_idx != -1:
+                so_block.insert(insert_idx, "   URBANSRC  ALL")
+            elif so_block and "SO FINISHED" in so_block[-1]:
+                so_block.insert(-1, "   URBANSRC  ALL")
+            else:
+                so_block.append("   URBANSRC  ALL")
 
         re_block = self._generate_receptors()
 
