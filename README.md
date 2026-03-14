@@ -1,6 +1,6 @@
 # **ATAQ_AERMOD**
 
-**Version:** v0.1.0-alpha
+**Version:** v0.1.1-alpha
 
 Overview:
 An open-source Python interface designed to simplify and automate the execution of the USEPA's AERMOD dispersion model. 
