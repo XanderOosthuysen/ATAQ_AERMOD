@@ -51,10 +51,31 @@ class AermetRunner:
     def _prepare_onsite_data(self, csv_path):
         print(f"    -> Formatting Onsite Data in logs folder...")
         df = pd.read_csv(csv_path)
+        
+        # Guard against NaN strings crashing the Intel Fortran READ
+        df = df.fillna(-999.0)
+        
+        # --- HOUR 0 FIX START ---
+        # AERMET strictly requires Hours 1-24. ERA5 provides Hours 0-23.
+        # Shift Hour 0 to Hour 24 of the previous calendar day.
+        dt = pd.to_datetime(df[['Year', 'Month', 'Day', 'Hour']])
+        mask = dt.dt.hour == 0
+        
+        dt_shifted = dt.copy()
+        dt_shifted[mask] -= pd.Timedelta(days=1)
+        
+        df['Year'] = dt_shifted.dt.year
+        df['Month'] = dt_shifted.dt.month
+        df['Day'] = dt_shifted.dt.day
+        df['Hour'] = dt.dt.hour
+        df.loc[mask, 'Hour'] = 24
+        # --- HOUR 0 FIX END ---
+        
         out_name = f"onsite_{self.year}.dat"
         out_path = self.run_dir / out_name
         
-        with open(out_path, 'w') as f:
+        # Enforce strict Windows line endings
+        with open(out_path, 'w', newline='\r\n') as f:
             for _, row in df.iterrows():
                 try:
                     line = (f"{int(row['Year']):4d} {int(row['Month']):2d} {int(row['Day']):2d} {int(row['Hour']):2d} "
@@ -77,7 +98,7 @@ class AermetRunner:
         lat_lon_str = f"{abs(lat):.3f}{lat_char} {abs(lon):.3f}{lon_char}"
         elev = self.cfg['location'].get('elevation', 0)
         
-        start_date = f"{self.year}/01/01"
+        start_date = f"{self.year - 1}/12/31"
         end_date = f"{self.year}/12/31"
         
         # Output filenames
