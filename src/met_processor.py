@@ -239,10 +239,20 @@ class UpperAirProcessor(BaseProcessor):
                 except KeyError:
                     df['dewpt_c'] = df['temp_c'] - 2
                 
+                # 1. Use the safe '0' fallback that we know your _get_var function handles perfectly
                 u = self._get_var(df, 'u', 'u_component_of_wind', 0)
                 v = self._get_var(df, 'v', 'v_component_of_wind', 0)
-                df['wind_spd_knots'] = np.sqrt(u**2 + v**2) * 1.94384
-                df['wind_dir'] = (270 - np.degrees(np.arctan2(v, u))) % 360
+                
+                # 2. Check if 'u' is a scalar fallback (0) or actual column data (Pandas Series)
+                if np.isscalar(u):
+                    # No wind data found. Inject the safe missing codes directly!
+                    df['wind_dir'] = -9999.0
+                    df['wind_spd_knots'] = -1943.8
+                else:
+                    # Real wind data exists (like in your 2023 files). Process the vector math!
+                    df['wind_spd_knots'] = np.sqrt(u**2 + v**2) * 1.94384
+                    df['wind_dir'] = (270 - np.degrees(np.arctan2(v, u))) % 360
+            
                 
                 if 'level' in df.columns: df['pressure_level'] = df['level']
                 elif 'pressure_level' in df.index.names: df['pressure_level'] = df.index.get_level_values('pressure_level')
@@ -250,6 +260,7 @@ class UpperAirProcessor(BaseProcessor):
                 dfs.append(df[['time','pressure_level','height_m','temp_c','dewpt_c','wind_dir','wind_spd_knots']])
                 ds.close()
             except Exception as e: 
+                print(f"[CRASH DETECTED] File failed: {e}")
                 continue
 
         if dfs:
