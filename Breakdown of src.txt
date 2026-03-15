@@ -1,0 +1,5 @@
+met_processor.py
+This script handles the raw data ingestion, currently for ERA5 data. It opens the raw weather files (like ERA5 NetCDF archives), handles complex spatial extractions, converts units (e.g., Kelvin to Celsius), calculates derived parameters (like extracting wind speed and direction from U and V vectors), and saves everything into a standardized, easy-to-read "interim" CSV.
+
+aermet_runner.py
+This script is the bridge between the interim CSV and the strict requirements of the AERMET Fortran executable. It reads the CSV, formats the columns into exact character widths, generates the aermet.inp control file, and triggers the binary.

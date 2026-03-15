@@ -46,7 +46,7 @@ aermod_params:
       avg_times:
       - '1'
       - '24'
-  dispersion_env: URBAN
+  dispersion_env: RURAL
   nox_method: NONE
 inventory:
   point: data/inventory/Johannesburg_Test/point_sources.csv
